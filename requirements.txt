@@ -1,0 +1,30 @@
+# ============================================================
+# Ashes of the Chosen — Production Pipeline Requirements
+# Pipeline v2.0 (Peer-Reviewed & Corrected Edition)
+# Install via: pip install -r requirements.txt
+# ============================================================
+
+# --- Core & Environment Configuration ---
+python-dotenv>=1.0.0
+
+# --- Module 1: Script Generator (Gemini LLM) ---
+google-generativeai>=0.8.0
+
+# --- Module 2: Voiceover Generator (Nigerian English TTS) ---
+edge-tts>=6.1.9
+
+# --- Module 6: Output Organiser & Google Drive Cloud Backup ---
+google-api-python-client>=2.120.0
+google-auth>=2.28.0
+google-auth-oauthlib>=1.2.0
+google-auth-httplib2>=0.2.0
+
+# --- Optional Utilities & Media Helpers ---
+requests>=2.31.0
+
+# ============================================================
+# Non-Python System Prerequisites (Must be on system PATH):
+# ------------------------------------------------------------
+# 1. FFmpeg (with libass enabled) — for Modules 4 & 5
+#    Download: https://ffmpeg.org/download.html
+# ============================================================

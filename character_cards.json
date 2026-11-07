@@ -1,0 +1,114 @@
+{
+  "character_cards": {
+    "_usage_note": "Paste the full character card text into every image prompt for that character to enforce visual consistency across all 50 episodes.",
+    "ADA": {
+      "full_name": "ADAEZE (ADA) OKAFOR",
+      "alias_phase_3": "ADANNA ROYAL",
+      "role": "Female Lead — The Chosen",
+      "episodes": "1-50",
+      "age": 24,
+      "background": "Brilliant, quietly strong. Grew up in a modest Enugu family. Scholarship student at Lagos University. Has a gift she does not understand — plants grow faster near her, she sees things in dreams before they happen. She is the sacrifice for this generation.",
+      "ancestry": "Descended from Ala — the Igbo earth goddess.",
+      "image_prompt_card": "Young Nigerian woman, 24 years old, deep brown skin, high cheekbones, full lips, almond-shaped dark eyes with an intense calm gaze, natural black hair — loose and voluminous in Phase 1, elaborate braids with gold thread in Phase 3. Slender but strong build, quiet dignity. Strong jaw, slightly broad nose.",
+      "mandatory_always": "MANDATORY IN EVERY IMAGE: small scar above left eyebrow.",
+      "mandatory_phase_3": "PHASE 3 ONLY — MANDATORY: delicate gold Igbo anklet on left ankle.",
+      "visual_fingerprint": "Small scar above left eyebrow — present in ALL 50 episodes without exception.",
+      "visual_phases": {
+        "phase_1": {
+          "episodes": "1-12",
+          "name": "The Innocent",
+          "description": "Simple cotton dresses, earth tones, warm browns, soft yellows. Natural hair loose. Warm soft lighting. She looks like she belongs in Enugu, not Lagos.",
+          "colour_palette": [
+            "warm brown",
+            "soft yellow",
+            "earth tones"
+          ]
+        },
+        "phase_2": {
+          "episodes": "13-18",
+          "name": "The Awakening",
+          "description": "Torn dirty clothing transitioning to simple Igbo wraps. Hair wild. Strange lighting as if it bends near her. Faint amber glow in her eyes in supernatural scenes.",
+          "colour_palette": [
+            "ash grey",
+            "forest green",
+            "deep earth tones"
+          ]
+        },
+        "phase_3": {
+          "episodes": "19-50",
+          "name": "Adanna Royal",
+          "description": "Full luxury transformation. Structured blazers, elegant gowns, statement jewellery. Elaborate gold-threaded braids. Always impeccable. MANDATORY: gold Igbo anklet never removed.",
+          "colour_palette": [
+            "midnight blue",
+            "rich gold",
+            "black"
+          ]
+        }
+      }
+    },
+    "ZION": {
+      "full_name": "ZION ADEYEMI",
+      "role": "Male Lead — The Betrayer",
+      "episodes": "1-50",
+      "age": 28,
+      "background": "First son of the most powerful Covenant family. Cold, controlled, chess-player mind. He got close to Ada, made her fall for him, then handed her over. Now she is back — and Zion is the only one who knows what she really is and what he helped do to her.",
+      "character_arc": "Episode 28 onward: Recognises Ada but tells nobody. Protects her from the shadows. Confrontation: says only — I know what I did. Tell me what you need.",
+      "image_prompt_card": "Nigerian man, 28 years old, tall and broad-shouldered, dark brown skin, sharp angular face, heavy brow, deep-set dark eyes that look permanently calculating, clean-cut low fade, always in luxury fashion.",
+      "mandatory_always": "MANDATORY: expression controlled, slight jaw tension — he never fully smiles.",
+      "later_episodes_note": "Later episodes: shadows under eyes, a man carrying something heavy."
+    },
+    "CHIEF_MRS_ADEYEMI": {
+      "full_name": "CHIEF MRS. NGOZI ADEYEMI",
+      "role": "Primary Villain — The Architect",
+      "episodes": "1-50",
+      "age": 55,
+      "relationship_to_cast": "Zion's mother.",
+      "background": "Architect of everything. Elegant, terrifying, never raises her voice. Has run The Covenant's sacrifices for 20 years. Sees Ada's return as an opportunity to control her power. Will smile at Ada's face while sharpening the knife behind her back.",
+      "narrative_role": "Saved for last in Ada's revenge. Final confrontation is the season's climax.",
+      "image_prompt_card": "Nigerian woman, 55 years old, commanding presence, dark skin with ageless elegance, high cheekbones, always in expensive traditional Nigerian attire — rich aso-oke fabric, heavy gold jewellery, perfectly tied gele headwrap.",
+      "mandatory_always": "MANDATORY: eyes that smile while calculating."
+    },
+    "AMARA": {
+      "full_name": "AMARA",
+      "role": "Best Friend & Ally — The Loyal One",
+      "episodes": "1-50, prominent from episode 19",
+      "age": 24,
+      "background": "Ada's childhood friend from Enugu. Funny, loud, fiercely loyal. The emotional anchor of the series. When Ada returns changed, Amara is the first to notice — and the first to say she does not care.",
+      "narrative_role": "Episode 36-42: Amara learns the full truth.",
+      "image_prompt_card": "Nigerian woman, 24 years old, medium brown skin, round cheerful face, natural twist-out hair, warm expressive eyes, always in bright Ankara print clothing that contrasts with Ada's darker palette.",
+      "mandatory_always": "MANDATORY: bright Ankara print clothing — contrasts deliberately with Ada's darker palette.",
+      "character_energy": "Loud, warm, fiercely protective."
+    },
+    "THE_BLIND_WOMAN": {
+      "full_name": "THE BLIND WOMAN",
+      "role": "Spiritual Guide",
+      "episodes": "13-18 primary, plus Ada's visions throughout series",
+      "age": "70+",
+      "background": "Lives in a village outside Lagos. Tells Ada she has been waiting for her. Teaches Ada what she truly is. Appears in the wilderness episodes and in Ada's visions throughout the series.",
+      "first_words_to_ada": "I have been waiting for you. Your grandmother told me you would come.",
+      "image_prompt_card": "Nigerian woman, 70+ years old, very dark skin, deep facial lines, completely white eyes with no iris visible, silver-white natural hair, simple white wrapper cloth.",
+      "mandatory_always": "MANDATORY: completely white eyes with no iris visible.",
+      "atmosphere_note": "Sits very still. The air around her is unusually calm."
+    },
+    "EMEKA_OKAFOR": {
+      "full_name": "EMEKA OKAFOR",
+      "role": "Ada's Father — The Grieving Parent",
+      "episodes": "36-42 primarily",
+      "age": 55,
+      "background": "Manipulated into believing Ada received an international scholarship. His grief when he discovers the truth is the most emotionally devastating scene of the season.",
+      "narrative_role": "Episode 36-42: Emeka learns what was done to his daughter.",
+      "image_prompt_card": "Nigerian man, 55 years old, medium brown skin, greying temples, kind tired eyes, simple traditional clothing.",
+      "character_energy": "Carries himself like a man who has worried quietly for a very long time."
+    },
+    "SENATOR_BALOGUN": {
+      "full_name": "SENATOR BALOGUN",
+      "role": "The Covenant's Political Head — The Public Face",
+      "episodes": "25-48",
+      "age": 60,
+      "background": "The Covenant's public face. Running for president during Season 1. Ada's revenge directly threatens his election — escalating stakes from personal to national.",
+      "narrative_stakes": "His presidential campaign means Ada's revenge escalates from personal to national consequence.",
+      "image_prompt_card": "Nigerian man, 60 years old, heavy build, very dark skin, silver hair always neatly cut, always in expensive agbada or tailored Western suits.",
+      "mandatory_always": "MANDATORY: public smile that never reaches his eyes."
+    }
+  }
+}

@@ -1,0 +1,110 @@
+{
+  "series": {
+    "title": "ASHES OF THE CHOSEN",
+    "tagline": "They buried her alive. She came back as their god.",
+    "genre": "Supernatural revenge drama. African mythology meets Lagos high-society thriller.",
+    "format": {
+      "total_episodes": 50,
+      "season": 1,
+      "episode_duration_seconds": "60-90",
+      "episode_ending": "Strict cliffhanger every episode"
+    },
+    "setting": "Modern-day Nigeria — Lagos high society, old money families, political power. Beneath: The Covenant.",
+    "competitive_positioning": "African supernatural revenge drama. No major channel in this space has an African cultural identity. Nigerian and broader African female audience is completely underserved.",
+    "overall_aesthetic": "Dark luxury meets African mysticism. Prestige Netflix feel set in Lagos, directed by someone raised on Igbo folklore. Not Nollywood low-budget. Not Western fantasy. Entirely its own identity."
+  },
+  "platforms": {
+    "primary_monetisation": {
+      "platform": "Facebook Reels",
+      "notes": "In-stream ads and Reels bonus programme opened to Nigerian creators July 2024. Post every episode here first. Apply for Reels bonus programme as soon as eligible."
+    },
+    "secondary_monetisation": {
+      "platform": "YouTube Shorts",
+      "notes": "Ad revenue requires 1,000 subscribers + 4,000 watch hours OR 10 million Shorts views in 90 days. Plan around the Shorts view path."
+    },
+    "traffic_only": {
+      "platform": "TikTok",
+      "notes": "Creator Rewards programme unavailable in Nigeria. TikTok drives viewers to Facebook and YouTube but does not pay directly. End every TikTok episode with: Watch the full series on [Facebook page name]."
+    }
+  },
+  "posting_rules": {
+    "optimal_posting_time": "7-9pm WAT for Nigerian Facebook audience",
+    "episode_title_formula": "ASHES OF THE CHOSEN | EP.5 | She remembered everything",
+    "ai_disclosure_required": true,
+    "crossposting_rule": "NEVER crosspost a TikTok-watermarked video to Facebook — it suppresses reach significantly. Upload natively to each platform from clean master files."
+  },
+  "the_covenant": {
+    "description": "A secret network of seven elite families who have ruled Nigerian wealth and power for generations through an ancient spiritual pact.",
+    "ritual": "Every generation, one girl from outside The Covenant is chosen as a sacrifice to renew the pact. She never knows she has been chosen until it is too late."
+  },
+  "core_arc": {
+    "the_betrayal": "Ada falls in love with Zion over three months. The night he proposes, he takes her to the ritual site. Seven families watching. She realises too late. Zion does not meet her eyes.",
+    "the_sacrifice": "The ritual is meant to extract her life force. But Ada is descended from Ala — the Igbo earth goddess. The ritual does not kill her. It awakens her.",
+    "the_lowest_point": "She wakes in a shallow grave outside Lagos. Walks for two days. A blind old woman takes her in and says: I have been waiting for you. Your grandmother told me you would come.",
+    "the_rise": "Episodes 20-30: Ada returns to Lagos as ADANNA ROYAL — a mysterious investor from Abuja. She enters The Covenant world, learns their secrets, then pulls the floor out from under each family.",
+    "the_revenge": "Surgical, not violent. Each of the seven families falls differently — financial ruin, public scandal, spiritual consequence, family fracture. Chief Mrs. Adeyemi is saved for last.",
+    "the_zion_problem": "Zion recognises Ada at episode 28. He tells nobody. Protects her from the shadows. Their confrontation: he says only — I know what I did. Tell me what you need.",
+    "the_redemption": "Ada dismantles the pact, forces every Covenant family to fund a foundation for girls like her. Then disappears. Post-credits: a girl in Kogi State. Plants growing fast. She looks at her hands."
+  },
+  "episode_arc_map": {
+    "episodes_1_5": {
+      "title": "The Setup",
+      "summary": "Ada arrives in Lagos. Meets Zion at a university event. Chemistry immediate. She is charmed but uncomfortable. Zion reports to his mother: she is the one."
+    },
+    "episodes_6_12": {
+      "title": "The Fall",
+      "summary": "Relationship deepens. Strange recurring dreams. Zion suppresses doubts. The proposal night. The ritual. The grave."
+    },
+    "episodes_13_18": {
+      "title": "The Wilderness",
+      "summary": "Ada between worlds. The blind woman's village. The truth about her bloodline. First accidental display of power. The decision: she is going back."
+    },
+    "episodes_19_25": {
+      "title": "The Return",
+      "summary": "Adanna Royal enters Lagos society. First Covenant family feels pressure without knowing why. Amara spots someone who looks exactly like Ada at a gala."
+    },
+    "episodes_26_35": {
+      "title": "The Hunt",
+      "summary": "Seven families taken down one by one. Zion recognises her at episode 28. Their silent war begins."
+    },
+    "episodes_36_42": {
+      "title": "The Confrontation",
+      "summary": "Amara learns the truth. Emeka learns what was done to his daughter. Zion and Ada face to face. Chief Mrs. Adeyemi realises who Adanna Royal truly is."
+    },
+    "episodes_43_48": {
+      "title": "The Reckoning",
+      "summary": "Chief Mrs. Adeyemi's final move. Senator's election in crisis. Ada's most powerful supernatural moment. The Covenant fractures from inside."
+    },
+    "episodes_49_50": {
+      "title": "The End",
+      "summary": "Ada's final choice. The foundation. The disappearance. Post-credits scene. Season 2 hook."
+    }
+  },
+  "script_generation": {
+    "word_count_target": "150-220 words per episode",
+    "words_per_minute": "140-160 natural pace",
+    "scenes_per_episode": 6,
+    "gemini_model": "gemini-2.5-flash",
+    "retry_on_rate_limit": {
+      "wait_seconds": 60,
+      "max_retries": 3
+    },
+    "narrative_continuity": {
+      "rolling_summary": "",
+      "note": "Inject a brief summary of the previous two episodes into every prompt to prevent LLM plot drift by episode 15."
+    },
+    "audience_reaction_notes": "",
+    "tone_instructions": "Prestige African drama. Measured pace. High emotional stakes. Never camp. Dialogue is sparse — every word must land."
+  },
+  "thumbnail_formula": {
+    "ada_position": "Always positioned left — three-quarter angle, looking at camera",
+    "right_side": "Episode antagonist or dramatic situation",
+    "logo": "ASHES OF THE CHOSEN in gold gothic font, centred at bottom",
+    "episode_number": "Top-left: EP.1, EP.2, etc.",
+    "bottom_text": "One dramatic line across the bottom frame",
+    "generation_tool": "Same Stable Diffusion / Leonardo.ai workflow as scene images — no Canva",
+    "safe_zone": "Keep all text and faces within centre 80% of frame to avoid platform UI crop"
+  },
+  "file_naming_convention": "episode-01, episode-02 (hyphen format throughout — mixed conventions break M6 folder logic)",
+  "output_directory": "./ashes-of-the-chosen"
+}

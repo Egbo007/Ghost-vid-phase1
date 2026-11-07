@@ -1,0 +1,135 @@
+{
+  "_usage_note": "Append the master negative prompt array to ALL image prompts without exception. Per-mood additions are appended on top of the master array for specific scene types.",
+  "_source": "Blueprint Section 3, v2 addition — peer-review corrected edition",
+  "master_negative_prompt": {
+    "label": "Master Negative Prompt — append to ALL image prompts",
+    "prompt_text": "Western facial features, European skin tone, light skin, blonde hair, blue eyes, anime style, cartoon, illustration, watermark, text overlay, extra fingers, bad anatomy, deformed hands, ugly, blurry, low quality, oversaturated, neon colours, modern Western clothing unless specified, crowded background clutter, inconsistent lighting",
+    "terms": [
+      "Western facial features",
+      "European skin tone",
+      "light skin",
+      "blonde hair",
+      "blue eyes",
+      "anime style",
+      "cartoon",
+      "illustration",
+      "watermark",
+      "text overlay",
+      "extra fingers",
+      "bad anatomy",
+      "deformed hands",
+      "ugly",
+      "blurry",
+      "low quality",
+      "oversaturated",
+      "neon colours",
+      "modern Western clothing unless specified",
+      "crowded background clutter",
+      "inconsistent lighting"
+    ]
+  },
+  "per_mood_additions": {
+    "romance_tension": {
+      "label": "Romance / Tension — additional negatives",
+      "additional_terms": [
+        "explicit content",
+        "violence",
+        "harsh lighting",
+        "flat lighting",
+        "overexposed"
+      ]
+    },
+    "supernatural": {
+      "label": "Supernatural — additional negatives",
+      "additional_terms": [
+        "realistic eyes on Ada (Phase 2 amber glow allowed)",
+        "Western fantasy aesthetic",
+        "generic magic effects",
+        "horror gore",
+        "cheap CGI look"
+      ]
+    },
+    "revenge_power": {
+      "label": "Revenge / Power — additional negatives",
+      "additional_terms": [
+        "smiling expression on Ada",
+        "warm lighting",
+        "soft focus",
+        "cheerful mood"
+      ]
+    },
+    "wilderness": {
+      "label": "Wilderness — additional negatives",
+      "additional_terms": [
+        "luxury clothing",
+        "gold jewellery",
+        "urban background",
+        "clean hair",
+        "perfect makeup"
+      ]
+    },
+    "covenant_villain": {
+      "label": "Covenant / Villain — additional negatives",
+      "additional_terms": [
+        "modern Western decor",
+        "bright cheerful lighting",
+        "casual clothing on Chief Mrs. Adeyemi",
+        "smiling eyes on villains"
+      ]
+    }
+  },
+  "character_specific_guards": {
+    "ADA": {
+      "never_generate": [
+        "Ada without the scar above left eyebrow",
+        "Ada smiling broadly in Phase 2 or Phase 3",
+        "Ada without gold anklet in Phase 3 (episodes 19-50)",
+        "Ada with light skin or non-Nigerian features",
+        "Ada in Phase 1 clothing during Phase 3 episodes"
+      ]
+    },
+    "ZION": {
+      "never_generate": [
+        "Zion fully smiling",
+        "Zion in casual or non-luxury clothing",
+        "Zion with open relaxed expression"
+      ]
+    },
+    "CHIEF_MRS_ADEYEMI": {
+      "never_generate": [
+        "Chief Mrs. Adeyemi in Western clothing",
+        "Chief Mrs. Adeyemi without gele headwrap (unless scene specifically requires it)",
+        "Chief Mrs. Adeyemi with an unguarded genuine smile",
+        "Chief Mrs. Adeyemi without heavy gold jewellery"
+      ]
+    },
+    "AMARA": {
+      "never_generate": [
+        "Amara in dark muted clothing (must contrast Ada with bright Ankara)",
+        "Amara looking threatening or sinister"
+      ]
+    },
+    "THE_BLIND_WOMAN": {
+      "never_generate": [
+        "The Blind Woman with normal coloured eyes or visible iris",
+        "The Blind Woman in anything other than simple white wrapper cloth",
+        "The Blind Woman in an urban or modern setting (wilderness and village only)"
+      ]
+    },
+    "SENATOR_BALOGUN": {
+      "never_generate": [
+        "Senator Balogun in casual clothing",
+        "Senator Balogun with a genuine warm smile"
+      ]
+    }
+  },
+  "safety_refusal_rewording": {
+    "_note": "M3 includes 3 automatic prompt rewording variants to retry on safety filter refusals.",
+    "example": {
+      "original": "ritual ceremony",
+      "reword_1": "traditional gathering with candlelight",
+      "reword_2": "ancestral ceremony with elders",
+      "reword_3": "cultural night gathering with fire"
+    }
+  }
+}

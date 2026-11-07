@@ -1,0 +1,122 @@
+{
+  "_usage_note": "Append the matching mood template text to every scene image prompt. Also used by assemble_video.py to automatically assign motion effects per scene.",
+  "_prompt_structure": "[Character card] + [Scene action from script] + [Mood template] + [Negative prompt array] + [Technical specs: photorealistic, 8K, vertical 9:16, 1080x1920]",
+  "moods": {
+    "romance_tension": {
+      "label": "Romance / Tension",
+      "episodes_typical": "1-12",
+      "scene_types": [
+        "romantic scenes",
+        "close connection moments",
+        "growing attraction",
+        "emotional vulnerability"
+      ],
+      "prompt_text": "Cinematic lighting, warm amber glow, shallow depth of field, luxury interior, emotional intensity, photorealistic, 8K, dramatic shadows, vertical 9:16",
+      "colour_palette": [
+        "warm amber",
+        "deep gold",
+        "soft candlelight"
+      ],
+      "motion_effect": "slow_zoom_in",
+      "motion_effect_note": "Ken Burns slow zoom in — romance and power moments"
+    },
+    "supernatural": {
+      "label": "Supernatural",
+      "episodes_typical": "13-18 and throughout visions",
+      "scene_types": [
+        "Ada's powers activating",
+        "vision sequences",
+        "Blind Woman scenes",
+        "spiritual awakening",
+        "ritual"
+      ],
+      "prompt_text": "Ethereal lighting, deep blue and purple atmosphere, glowing particles, ancient Igbo spiritual aesthetic, mystical, photorealistic with fantasy elements, vertical 9:16",
+      "colour_palette": [
+        "midnight blue",
+        "deep purple",
+        "amber glow in eyes"
+      ],
+      "motion_effect": "static_slight_zoom",
+      "motion_effect_note": "Static with slight zoom — dialogue-heavy and supernatural reveals"
+    },
+    "revenge_power": {
+      "label": "Revenge / Power",
+      "episodes_typical": "19-50",
+      "scene_types": [
+        "confrontation scenes",
+        "Adanna Royal entering a room",
+        "power moves",
+        "each Covenant family falling"
+      ],
+      "prompt_text": "High contrast lighting, deep shadows, cold blue tones with gold accents, cinematic close-up, intense gaze, photorealistic, dramatic, vertical 9:16",
+      "colour_palette": [
+        "cold blue",
+        "gold accents",
+        "deep shadow"
+      ],
+      "motion_effect": "slow_zoom_in",
+      "motion_effect_note": "Ken Burns slow zoom in — power moments"
+    },
+    "wilderness": {
+      "label": "Wilderness",
+      "episodes_typical": "13-18",
+      "scene_types": [
+        "aftermath of sacrifice",
+        "walking outside Lagos",
+        "Blind Woman village",
+        "between worlds",
+        "emotional devastation"
+      ],
+      "prompt_text": "Desaturated colours, ash and grey tones, natural lighting, overgrown vegetation, dust particles, isolated, emotionally heavy, cinematic, vertical 9:16",
+      "colour_palette": [
+        "ash grey",
+        "forest green",
+        "deep earth tones",
+        "white"
+      ],
+      "motion_effect": "slow_zoom_out",
+      "motion_effect_note": "Slow zoom out — dramatic reveals and isolation"
+    },
+    "covenant_villain": {
+      "label": "Covenant / Villain",
+      "episodes_typical": "1-50 villain scenes",
+      "scene_types": [
+        "Chief Mrs. Adeyemi scenes",
+        "Senator Balogun scenes",
+        "Covenant meetings",
+        "scheming",
+        "ominous reveals"
+      ],
+      "prompt_text": "Dark opulent setting, candlelight, rich traditional Nigerian fabrics, ominous atmosphere, high contrast shadows, cinematic, vertical 9:16",
+      "colour_palette": [
+        "deep gold",
+        "amber",
+        "candlelight",
+        "dark shadow"
+      ],
+      "motion_effect": "pan_right_to_left",
+      "motion_effect_note": "Pan right to left — tension and reaction shots"
+    }
+  },
+  "motion_effects_reference": {
+    "slow_zoom_in": "Ken Burns effect — slow zoom towards subject. Use for romance, power, impact moments.",
+    "slow_zoom_out": "Slow pull back from subject. Use for dramatic reveals, isolation, aftermath.",
+    "pan_left_to_right": "Horizontal pan left to right. Use for action tracking.",
+    "pan_right_to_left": "Horizontal pan right to left. Use for tension and reaction.",
+    "static_slight_zoom": "Very subtle zoom, near-static. Use for dialogue-heavy and supernatural scenes."
+  },
+  "master_colour_palette": {
+    "deep_gold_amber": {
+      "use": "Wealth, power, The Covenant world — luxury interior scenes"
+    },
+    "midnight_blue_purple": {
+      "use": "Ada's spiritual and supernatural side — awakening scenes"
+    },
+    "burning_orange_red": {
+      "use": "Revenge, fire, power moments — confrontation scenes"
+    },
+    "ash_grey_white": {
+      "use": "The wilderness, between worlds — episodes 13-18"
+    }
+  }
+}

@@ -1,0 +1,93 @@
+﻿# ============================================================
+# Ashes of the Chosen — Strict .gitignore
+# ============================================================
+
+# ---------------------------
+# Secrets & Credentials
+# ---------------------------
+.env
+.env.*
+credentials.json
+service_account*.json
+*_credentials.json
+
+# ---------------------------
+# Media Files (large assets — keep out of repo)
+# ---------------------------
+*.mp4
+*.mp3
+*.wav
+*.avi
+*.mov
+*.mkv
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.webp
+*.bmp
+*.tiff
+
+# ---------------------------
+# Python Cache & Bytecode
+# ---------------------------
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# ---------------------------
+# Python Virtual Environments
+# ---------------------------
+venv/
+.venv/
+env/
+ENV/
+
+# ---------------------------
+# Python Build & Distribution
+# ---------------------------
+*.egg-info/
+dist/
+build/
+*.egg
+*.whl
+.eggs/
+
+# ---------------------------
+# OS-generated Files
+# ---------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# ---------------------------
+# IDE & Editor Files
+# ---------------------------
+.vscode/
+.idea/
+*.suo
+*.swp
+*.swo
+*~
+
+# ---------------------------
+# Logs & Temporary Files
+# ---------------------------
+*.log
+*.tmp
+*.temp
+logs/
+output/
+temp/
+
+# ---------------------------
+# Notebook Checkpoints
+# ---------------------------
+.ipynb_checkpoints/
+
+# Blueprint working media folders
+/ashes-of-the-chosen/
+/upload-ready/
