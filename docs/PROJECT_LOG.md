@@ -7,10 +7,11 @@ the task log; bug status changes are recorded in the bug register.
 
 ## Current stage
 
-**S0 — Baseline and project hygiene.** Documentation only. No behaviour change.
+**S1 — Text to audio.** Brief 002 (S1a) fixes M2: word-level timestamps and
+stage-direction parsing. Coded and tested; awaiting user verification.
 
-Baseline is tagged `baseline-v0`. Work happens on branch `stage0-hygiene`. Nothing is
-pushed or merged from this stage.
+Baseline is tagged `baseline-v0`. S0 work is on `stage0-hygiene`; S1a work is on
+`stage1-m2-word-timing`. Nothing is pushed or merged.
 
 ---
 
@@ -18,32 +19,42 @@ pushed or merged from this stage.
 
 | Brief | Title | Stage | Status | Notes |
 |---|---|---|---|---|
-| 001 | Stage 0 baseline and project hygiene | S0 | In progress | Docs only. No `.py`, `.json` or `requirements.txt` changes. |
+| 001 | Stage 0 baseline and project hygiene | S0 | Complete | Docs only. Committed `56236ba` on `stage0-hygiene`. |
+| 002 | S1a: fix M2 word timing and stage-direction parsing | S1 | Coded and tested; awaiting user verification | B-01, B-02, B-12 fixed. Adds `tests/`, `episode_XX_spoken.txt`, `edge-tts>=7.3.1,<8`. |
 
 ---
 
 ## Bug register
 
-All bugs below are **Open**. None are fixed in S0 — this stage deliberately changes no
-behaviour. Severity is not assigned here; ordering is by module.
+Bugs are **Open** unless marked otherwise. "Fixed, pending user verification" means the
+code and unit tests are in place but the fix has not been confirmed against real Edge-TTS
+output. Severity is not assigned here; ordering is by module.
 
 ### B-01 — M2: word timestamps are always empty
-**Status:** Open · **Confirmed**
+**Status:** Fixed, pending user verification
 
-`generate_voice.py` calls `edge_tts.Communicate(text, voice)` without
+`generate_voice.py` called `edge_tts.Communicate(text, voice)` without
 `boundary="WordBoundary"`. edge-tts 7.3.1 defaults to sentence boundaries, so the stream
-never emits `WordBoundary` chunks. `word_boundaries` stays empty, `episode_XX_timestamps.json`
-is written with zero words, and M5 has nothing to sync subtitles to.
+never emitted `WordBoundary` chunks. `word_boundaries` stayed empty,
+`episode_XX_timestamps.json` was written with zero words, and M5 had nothing to sync
+subtitles to.
 
-Confirmed by inspection of `generate_voice.py` line 145 against the installed edge-tts
-version. `requirements.txt` pins `edge-tts>=6.1.9`, which resolves to 7.3.1.
+Fixed in Brief 002: `Communicate(..., boundary="WordBoundary")`, plus a guard that raises
+inside the retry loop if non-empty text yields zero word boundaries, so an empty timing
+file can no longer be written silently. `requirements.txt` now pins `edge-tts>=7.3.1,<8`.
 
 ### B-02 — M2: parser leaks visual cues into narration
-**Status:** Open
+**Status:** Fixed, pending user verification
 
-`parse_script` skips a line only when it both starts with `(` **and** ends with `)`.
-Truncated visual lines, or `(Visual: ...)` cues wrapped across multiple lines, fail that
-test and get spoken as narration — and counted in the word total.
+`parse_script` skipped a line only when it both started with `(` **and** ended with `)`.
+Truncated visual lines, or `(Visual: ...)` cues wrapped across multiple lines, failed that
+test and were spoken as narration — and counted in the word total.
+
+Fixed in Brief 002: `strip_visual_directives` removes `(Visual: ...)` directives of any
+length, case-insensitively, keeping surrounding narration. An unclosed directive ends at
+the next blank line, the next scene header, or end of scene, and logs a WARNING.
+Mid-sentence parentheses are preserved. `validate_scenes` then refuses to proceed if any
+scene is empty or still contains `Visual:`.
 
 ### B-03 — M1: no enforcement of the word range or finish reason
 **Status:** Open
@@ -104,7 +115,26 @@ Google Drive. `--skip-drive` is the current workaround.
   are not resolved.
 - The `*.png` rule will hide character reference images once the character bible stage
   introduces them. Not yet an active problem; will become one at S3.
-- No tests exist anywhere in the repo.
+- No tests exist anywhere in the repo. **Partially addressed in Brief 002**: `tests/` now
+  exists with unit coverage for M2 parsing, validation and word timing.
+
+### B-11 — M2: flashback voice triggered by the word "flashback" in narration
+**Status:** Open
+
+`parse_script` sets `is_flashback` when the scene meta **or the narration text** contains
+the string "flashback". A line of dialogue that merely mentions a flashback switches the
+scene to `en-NG-AbeoNeural`, which is a continuity and casting decision made by a substring
+match. Recorded here rather than fixed in Brief 002, which was scoped to timing and parsing
+only.
+
+### B-12 — M2: ffprobe failure returned 0.0
+**Status:** Fixed, pending user verification
+
+`get_audio_duration` caught every ffprobe exception, logged a warning, and returned `0.0`.
+A zero duration silently corrupts `episode_XX_scene_durations.json` (which M4 cuts to) and
+collapses the running timeline for every later scene.
+
+Fixed in Brief 002: it raises `RuntimeError` instead, and `main()` reports it and exits 1.
 
 ---
 
@@ -112,4 +142,5 @@ Google Drive. `--skip-drive` is the current workaround.
 
 | Stage | Scope | Result |
 |---|---|---|
-| S0 | Baseline and hygiene | In progress |
+| S0 | Baseline and hygiene | Complete — `56236ba` |
+| S1 | Text to audio | In progress — Brief 002 coded and tested, awaiting user verification |

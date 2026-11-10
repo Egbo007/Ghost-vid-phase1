@@ -145,3 +145,64 @@ to break a downstream module.
 
 **Rules out:** Casual `pip install` additions and unpinned minimum-version ranges without a
 check.
+
+---
+
+## DEC-010 — Meta Muse integration and spending are on hold
+
+**Status:** Active
+
+Meta Muse integration and any spending on it are on hold until the image-quality
+optimisation stage.
+
+**Why:** Muse is the alternative candidate in DEC-003, and choosing it before the bake-off
+would pre-empt the comparison. Integration work on a provider that may lose the bake-off is
+wasted effort.
+
+**Rules out:** Muse API work, Muse spend, and Muse-specific code before the image-quality
+optimisation stage.
+
+---
+
+## DEC-011 — Work Phases A-E and the Definition-of-Done ladder
+
+**Status:** Active
+
+Work is organised into five phases:
+
+- **A — Core repair.** Fix what is broken in the existing pipeline.
+- **B — Image provider.** Select and integrate the provider.
+- **C — Character and scene intelligence.** Bible, ledger, scene breakdown, prompt composer.
+- **D — Image generation and QC.** Generate and review images.
+- **E — Integration and production readiness.** End-to-end runs.
+
+Completion is tracked on a four-rung ladder:
+
+- **D1 — Written.** The code or document exists.
+- **D2 — Tested.** Automated tests pass.
+- **D3 — User-verified.** The user has confirmed it against real output.
+- **D4 — Production-ready.** It has run in a real episode without intervention.
+
+**A brief closes at D2. A phase gate requires D3.** Nothing is called "verified" by an
+agent — only "coded and tested".
+
+**Why:** The distinction between "I wrote it" and "it works on real data" is exactly where
+this project has been losing time. Naming the rungs stops the two from being conflated.
+
+**Rules out:** Closing a brief on code alone, and opening a phase gate on unit tests alone.
+
+---
+
+## DEC-012 — Flow reference images live under `assets\characters\<name>\`
+
+**Status:** Active
+
+Reference images for Google Flow live under `assets\characters\<name>\` and stay untracked
+until Phase C.
+
+**Why:** They are large binaries tied to one provider's workflow, and Phase C is where the
+character bible decides their final structure. Tracking them now would lock in a layout
+before the design exists.
+
+**Rules out:** Committing reference images before Phase C, and scattering them outside the
+`assets\characters\` tree.

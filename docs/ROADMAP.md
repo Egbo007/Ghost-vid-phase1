@@ -120,3 +120,23 @@ run.
 ## Parked
 
 Phase 2 and hosting are parked. Not scheduled, not estimated. See DEC-001.
+
+---
+
+## Work Phases
+
+The S0-S6 stages above are the technical sequence. Work is also organised into five phases
+(DEC-011), each covering a set of briefs:
+
+| Phase | Focus | Briefs |
+|---|---|---|
+| A | Core repair — fix what is broken in the existing pipeline | 002-005 |
+| B | Image provider — select and integrate | 006-007 |
+| C | Character and scene intelligence — bible, ledger, breakdown, prompt composer | 008-011 |
+| D | Image generation and QC | 012-016 |
+| E | Integration and production readiness | 017-022 |
+
+Completion rungs (DEC-011): **D1** written, **D2** tested, **D3** user-verified,
+**D4** production-ready. A brief closes at D2; a phase gate needs D3.
+
+Brief 002 (S1a, M2 word timing and stage-direction parsing) is the first brief of Phase A.
