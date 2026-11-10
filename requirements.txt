@@ -11,7 +11,7 @@ python-dotenv>=1.0.0
 google-generativeai>=0.8.0
 
 # --- Module 2: Voiceover Generator (Nigerian English TTS) ---
-edge-tts>=6.1.9
+edge-tts>=7.3.1,<8
 
 # --- Module 6: Output Organiser & Google Drive Cloud Backup ---
 google-api-python-client>=2.120.0
