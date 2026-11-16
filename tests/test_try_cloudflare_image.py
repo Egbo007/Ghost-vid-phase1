@@ -8,6 +8,7 @@ Stdlib unittest only. No network: every HTTP call is mocked.
 import sys
 import json
 import base64
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -404,6 +405,268 @@ class TestRequestShape(unittest.TestCase):
         self.assertEqual(kwargs["files"]["width"], (None, "720"))
         self.assertEqual(kwargs["files"]["height"], (None, "1280"))
         self.assertIn("timeout", kwargs)
+
+
+class TestReferences(unittest.TestCase):
+    """--reference: validation, preparation, and multipart field order."""
+
+    def test_more_than_four_is_an_error(self):
+        paths = [f"r{i}.png" for i in range(5)]
+        ok, error = cf.validate_reference_paths(paths)
+        self.assertFalse(ok)
+        self.assertIn("at most 4", error)
+
+    def test_four_is_allowed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = []
+            for i in range(4):
+                p = Path(tmp) / f"r{i}.png"
+                p.write_bytes(b"x")
+                paths.append(str(p))
+            ok, error = cf.validate_reference_paths(paths)
+        self.assertTrue(ok, error)
+
+    def test_missing_file_errors_cleanly(self):
+        ok, error = cf.validate_reference_paths(["definitely_missing_abc.png"])
+        self.assertFalse(ok)
+        self.assertIn("not found", error)
+
+    def test_directory_is_not_a_reference(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ok, error = cf.validate_reference_paths([tmp])
+        self.assertFalse(ok)
+        self.assertIn("not a file", error)
+
+    def test_no_references_is_fine(self):
+        ok, error = cf.validate_reference_paths([])
+        self.assertTrue(ok)
+        self.assertIsNone(error)
+
+    def test_prepared_path_naming(self):
+        """Preparation writes ref_prepared_<n>.png and leaves the original alone."""
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "source.png"
+            src.write_bytes(b"original-bytes")
+            out = Path(tmp) / "out"
+
+            with mock.patch.object(cf.subprocess, "run") as run:
+                def fake_run(cmd, **kwargs):
+                    Path(cmd[-1]).write_bytes(b"prepared")
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                run.side_effect = fake_run
+                prepared = cf.prepare_reference(src, out, 2)
+
+            self.assertEqual(prepared.name, "ref_prepared_2.png")
+            self.assertEqual(prepared.read_bytes(), b"prepared")
+            self.assertEqual(src.read_bytes(), b"original-bytes")
+
+    def test_ffmpeg_command_centre_crops_to_square(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "source.png"
+            src.write_bytes(b"x")
+            captured = {}
+
+            with mock.patch.object(cf.subprocess, "run") as run:
+                def fake_run(cmd, **kwargs):
+                    captured["cmd"] = cmd
+                    Path(cmd[-1]).write_bytes(b"prepared")
+                    return mock.Mock(returncode=0, stdout="", stderr="")
+                run.side_effect = fake_run
+                cf.prepare_reference(src, Path(tmp) / "out", 0)
+
+            vf = captured["cmd"][captured["cmd"].index("-vf") + 1]
+            self.assertIn("crop='min(iw,ih)':'min(iw,ih)'", vf)
+            self.assertIn(f"scale={cf.REFERENCE_SIZE}:{cf.REFERENCE_SIZE}", vf)
+
+    def test_ffmpeg_failure_raises_with_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "source.png"
+            src.write_bytes(b"x")
+            err = subprocess.CalledProcessError(1, "ffmpeg", stderr="boom: bad input")
+            with mock.patch.object(cf.subprocess, "run", side_effect=err):
+                with self.assertRaises(RuntimeError) as ctx:
+                    cf.prepare_reference(src, Path(tmp) / "out", 0)
+            self.assertIn("boom", str(ctx.exception))
+
+    def test_missing_ffmpeg_raises_clearly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "source.png"
+            src.write_bytes(b"x")
+            with mock.patch.object(cf.subprocess, "run", side_effect=FileNotFoundError()):
+                with self.assertRaises(RuntimeError) as ctx:
+                    cf.prepare_reference(src, Path(tmp) / "out", 0)
+            self.assertIn("ffmpeg", str(ctx.exception).lower())
+
+    def test_references_become_input_image_fields_in_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            refs = []
+            for i in range(3):
+                p = Path(tmp) / f"ref{i}.png"
+                p.write_bytes(f"bytes{i}".encode())
+                refs.append(p)
+
+            session = mock.Mock()
+            session.post.return_value = FakeResponse(200, {"result": {}})
+            cf.post_image("https://example.invalid", FAKE_TOKEN, "p", 720, 1280,
+                          session=session, references=refs)
+
+            files = session.post.call_args.kwargs["files"]
+            self.assertEqual(files["input_image_0"][1], b"bytes0")
+            self.assertEqual(files["input_image_1"][1], b"bytes1")
+            self.assertEqual(files["input_image_2"][1], b"bytes2")
+            self.assertNotIn("input_image_3", files)
+            self.assertEqual(files["input_image_0"][0], "ref0.png")
+            self.assertEqual(files["input_image_0"][2], "image/png")
+
+    def test_no_references_means_no_input_image_fields(self):
+        session = mock.Mock()
+        session.post.return_value = FakeResponse(200, {"result": {}})
+        cf.post_image("https://example.invalid", FAKE_TOKEN, "p", 720, 1280,
+                      session=session)
+        files = session.post.call_args.kwargs["files"]
+        self.assertFalse([k for k in files if k.startswith("input_image_")])
+
+    def test_dry_run_lists_references_and_makes_no_network_call(self):
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "face.png"
+            src.write_bytes(b"x")
+            out = Path(tmp) / "out"
+            buf = io.StringIO()
+            with mock.patch.object(cf, "prepare_reference") as prep:
+                prep.side_effect = lambda s, o, i: _fake_prepared(o, i)
+                with mock.patch.object(cf, "post_image") as post:
+                    with mock.patch.object(cf, "request_with_retries") as retry:
+                        with redirect_stdout(buf):
+                            code = cf.main(["--scene", "s", "--reference", str(src),
+                                            "--out", str(out), "--dry-run"])
+            post.assert_not_called()
+            retry.assert_not_called()
+        text = buf.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("input_image_0", text)
+        self.assertIn("ref_prepared_0.png", text)
+        self.assertIn("references       : 1 of max 4", text)
+
+    def test_dry_run_errors_on_five_references(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            args = ["--scene", "s", "--out", tmp, "--dry-run"]
+            for i in range(5):
+                p = Path(tmp) / f"r{i}.png"
+                p.write_bytes(b"x")
+                args += ["--reference", str(p)]
+            with self.assertLogs("try_cloudflare_image", level="ERROR") as logs:
+                code = cf.main(args)
+        self.assertEqual(code, 1)
+        self.assertIn("at most 4", "\n".join(logs.output))
+
+    def test_usage_log_records_reference_count(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cf.append_usage_log(Path(tmp), 720, 1280, 200, reference_count=2)
+            entry = json.loads((Path(tmp) / "usage_log.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(entry["reference_count"], 2)
+
+    def test_usage_log_defaults_to_zero(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            cf.append_usage_log(Path(tmp), 720, 1280, 200)
+            entry = json.loads((Path(tmp) / "usage_log.jsonl").read_text(encoding="utf-8"))
+        self.assertEqual(entry["reference_count"], 0)
+
+
+def _fake_prepared(out_dir, index):
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    p = out_dir / f"ref_prepared_{index}.png"
+    p.write_bytes(b"prepared")
+    return p
+
+
+class TestPromptFile(unittest.TestCase):
+    """--prompt-file replaces the built prompt entirely."""
+
+    def test_prompt_file_text_is_used_verbatim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pf = Path(tmp) / "prompt.txt"
+            pf.write_text("  A custom prompt line.\n", encoding="utf-8")
+            self.assertEqual(cf.read_prompt_file(pf), "A custom prompt line.")
+
+    def test_bom_is_stripped(self):
+        """Windows editors write a BOM; it must not become part of the prompt."""
+        with tempfile.TemporaryDirectory() as tmp:
+            pf = Path(tmp) / "prompt.txt"
+            pf.write_bytes(b"\xef\xbb\xbfA prompt with a BOM")
+            self.assertEqual(cf.read_prompt_file(pf), "A prompt with a BOM")
+
+    def test_non_ascii_prompt_does_not_crash(self):
+        """Accented text and em dashes must print on a cp1252 console."""
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as tmp:
+            pf = Path(tmp) / "prompt.txt"
+            pf.write_text("Ada — a Nigerian woman, façade", encoding="utf-8")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = cf.main(["--prompt-file", str(pf), "--out", tmp, "--dry-run"])
+        self.assertEqual(code, 0)
+        self.assertIn("façade", buf.getvalue())
+
+    def test_missing_prompt_file_errors(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            cf.read_prompt_file("no_such_prompt_file.txt")
+        self.assertIn("not found", str(ctx.exception))
+
+    def test_empty_prompt_file_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pf = Path(tmp) / "empty.txt"
+            pf.write_text("   \n\n", encoding="utf-8")
+            with self.assertRaises(RuntimeError) as ctx:
+                cf.read_prompt_file(pf)
+            self.assertIn("empty", str(ctx.exception))
+
+    def test_prompt_file_replaces_builder(self):
+        """Card text must NOT be prepended when a prompt file is used."""
+        import io
+        from contextlib import redirect_stdout
+        with tempfile.TemporaryDirectory() as tmp:
+            pf = Path(tmp) / "prompt.txt"
+            pf.write_text("ONLY THIS TEXT", encoding="utf-8")
+            buf = io.StringIO()
+            with redirect_stdout(buf):
+                code = cf.main(["--prompt-file", str(pf), "--out", tmp, "--dry-run"])
+        text = buf.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("ONLY THIS TEXT", text)
+        self.assertIn("prompt source    : file:", text)
+        # The card description must be absent.
+        self.assertNotIn("deep brown skin", text)
+
+    def test_both_flags_together_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            pf = Path(tmp) / "prompt.txt"
+            pf.write_text("x", encoding="utf-8")
+            with self.assertLogs("try_cloudflare_image", level="ERROR") as logs:
+                code = cf.main(["--scene", "s", "--prompt-file", str(pf), "--dry-run"])
+        self.assertEqual(code, 1)
+        self.assertIn("not both", "\n".join(logs.output))
+
+    def test_neither_flag_is_an_error(self):
+        with self.assertLogs("try_cloudflare_image", level="ERROR") as logs:
+            code = cf.main(["--dry-run"])
+        self.assertEqual(code, 1)
+        self.assertIn("required", "\n".join(logs.output))
+
+    def test_scene_only_still_uses_the_card(self):
+        """Existing behaviour must be unchanged when --prompt-file is absent."""
+        import io
+        from contextlib import redirect_stdout
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            code = cf.main(["--scene", "a scene", "--dry-run"])
+        text = buf.getvalue()
+        self.assertEqual(code, 0)
+        self.assertIn("deep brown skin", text)
+        self.assertIn("small scar above left eyebrow", text)
 
 
 if __name__ == "__main__":

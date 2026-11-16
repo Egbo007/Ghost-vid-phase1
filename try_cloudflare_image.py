@@ -57,6 +57,12 @@ MAX_ATTEMPTS = 3          # one try plus up to 2 retries
 RETRY_BACKOFF_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 120
 
+# Reference images: Cloudflare accepts up to 4, each smaller than 512x512, as
+# multipart fields input_image_0..input_image_3. We prepare each one as a
+# 448x448 PNG so it is always inside the limit whatever the source aspect.
+MAX_REFERENCES = 4
+REFERENCE_SIZE = 448
+
 # The card fields that make up the character's visual identity, in the order
 # they are joined. `image_prompt_card` is the physical description;
 # `mandatory_always` carries the visual fingerprint that must never be dropped.
@@ -135,6 +141,114 @@ def describe_prompt_sources(card, style_line):
     """Which card/config keys fed the prompt, for the report."""
     used = [f for f in CARD_FIELDS if isinstance(card.get(f), str) and card.get(f).strip()]
     return used, ("series.overall_aesthetic" if style_line else None)
+
+
+# ------------------------------------------------------------------ references
+
+def validate_reference_paths(paths):
+    """
+    Checks the reference list before anything is prepared or sent.
+
+    Returns (ok, error_message). Errors name the offending path so a typo is
+    obvious rather than surfacing as an ffmpeg failure later.
+    """
+    if not paths:
+        return True, None
+    if len(paths) > MAX_REFERENCES:
+        return False, (
+            f"Too many reference images: {len(paths)} given, "
+            f"Cloudflare accepts at most {MAX_REFERENCES}."
+        )
+    for raw in paths:
+        path = Path(raw)
+        if not path.exists():
+            return False, f"Reference image not found: {raw}"
+        if not path.is_file():
+            return False, f"Reference path is not a file: {raw}"
+    return True, None
+
+
+def prepare_reference(source_path, out_dir, index):
+    """
+    Centre-crops a reference to a square and scales it to REFERENCE_SIZE.
+
+    The original file is only read, never modified. Returns the prepared path.
+    Raises RuntimeError with ffmpeg's own last stderr lines on failure.
+    """
+    source_path = Path(source_path)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    prepared = out_dir / f"ref_prepared_{index}.png"
+
+    # min(iw,ih) square from the centre, then scale. force_original_aspect_ratio
+    # is not needed after a square crop, but setsar=1 keeps the PNG clean.
+    vf = (
+        f"crop='min(iw,ih)':'min(iw,ih)',"
+        f"scale={REFERENCE_SIZE}:{REFERENCE_SIZE}:flags=lanczos,"
+        f"setsar=1"
+    )
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", str(source_path),
+        "-vf", vf,
+        "-frames:v", "1",
+        str(prepared),
+    ]
+    try:
+        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             text=True, check=True)
+    except FileNotFoundError:
+        raise RuntimeError(
+            "ffmpeg was not found on PATH; it is required to prepare reference images."
+        )
+    except subprocess.CalledProcessError as e:
+        tail = "\n".join((e.stderr or "").strip().splitlines()[-5:])
+        raise RuntimeError(
+            f"ffmpeg could not prepare reference image {source_path.name}. "
+            f"Last output:\n{tail}"
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"ffmpeg could not prepare reference image {source_path.name}: "
+            f"{type(e).__name__}"
+        )
+
+    if not prepared.exists() or prepared.stat().st_size == 0:
+        raise RuntimeError(
+            f"ffmpeg reported success but {prepared.name} is missing or empty."
+        )
+    return prepared
+
+
+def prepare_references(paths, out_dir):
+    """Prepares every reference in the order given. Returns a list of prepared paths."""
+    prepared = []
+    for index, raw in enumerate(paths):
+        prepared.append(prepare_reference(raw, out_dir, index))
+    return prepared
+
+
+def read_prompt_file(path):
+    """
+    Reads a full prompt from a text file. The file's content IS the prompt, so
+    nothing is prepended or appended. Raises RuntimeError on an unreadable or
+    empty file.
+    """
+    path = Path(path)
+    if not path.exists():
+        raise RuntimeError(f"Prompt file not found: {path}")
+    if not path.is_file():
+        raise RuntimeError(f"Prompt file path is not a file: {path}")
+    try:
+        # utf-8-sig strips a byte-order mark if present. Windows editors
+        # (Notepad, PowerShell's Out-File) commonly write one, and a leading
+        # U+FEFF would otherwise be sent to the model as part of the prompt.
+        text = path.read_text(encoding="utf-8-sig").strip()
+    except Exception as e:
+        raise RuntimeError(f"Could not read prompt file {path.name}: {type(e).__name__}")
+    if not text:
+        raise RuntimeError(f"Prompt file is empty: {path.name}")
+    return text
 
 
 # ------------------------------------------------------------------ request
@@ -229,11 +343,13 @@ def cloudflare_error_message(payload):
     return "no error message in response"
 
 
-def post_image(endpoint, token, prompt, width, height, session=None):
+def post_image(endpoint, token, prompt, width, height, session=None, references=None):
     """
     One multipart request. Returns (status_code, payload_or_None, raw_bytes_or_None).
 
     The token is passed as a header and never appears in a log line or exception.
+    `references` is a list of prepared image paths, sent as input_image_0, _1, ...
+    in the order given.
     """
     if session is None:
         import requests as session
@@ -243,6 +359,14 @@ def post_image(endpoint, token, prompt, width, height, session=None):
         "width": (None, str(width)),
         "height": (None, str(height)),
     }
+    for index, ref_path in enumerate(references or []):
+        ref_path = Path(ref_path)
+        files[f"input_image_{index}"] = (
+            ref_path.name,
+            ref_path.read_bytes(),
+            "image/png",
+        )
+
     headers = {"Authorization": f"Bearer {token}"}
     response = session.post(
         endpoint, headers=headers, files=files, timeout=REQUEST_TIMEOUT_SECONDS
@@ -255,7 +379,7 @@ def post_image(endpoint, token, prompt, width, height, session=None):
 
 
 def request_with_retries(endpoint, token, prompt, width, height, session=None,
-                         sleep=time.sleep):
+                         sleep=time.sleep, references=None):
     """
     Sends the request, retrying up to MAX_ATTEMPTS on 429 and 5xx.
 
@@ -265,7 +389,8 @@ def request_with_retries(endpoint, token, prompt, width, height, session=None,
     for attempt in range(1, MAX_ATTEMPTS + 1):
         try:
             status, payload, _ = post_image(
-                endpoint, token, prompt, width, height, session=session
+                endpoint, token, prompt, width, height, session=session,
+                references=references
             )
         except Exception as e:
             # Network-level failure: report the exception type only. A requests
@@ -305,7 +430,7 @@ def probe_pixels(path):
         return None
 
 
-def append_usage_log(out_dir, width, height, status, model=MODEL_ID):
+def append_usage_log(out_dir, width, height, status, model=MODEL_ID, reference_count=0):
     """One JSONL line per request, for tracking the free daily allowance."""
     out_dir.mkdir(parents=True, exist_ok=True)
     entry = {
@@ -314,6 +439,7 @@ def append_usage_log(out_dir, width, height, status, model=MODEL_ID):
         "width": width,
         "height": height,
         "http_status": status,
+        "reference_count": reference_count,
     }
     with open(out_dir / "usage_log.jsonl", "a", encoding="utf-8") as f:
         f.write(json.dumps(entry) + "\n")
@@ -336,8 +462,17 @@ def parse_args(argv=None):
     )
     parser.add_argument("--character", default=DEFAULT_CHARACTER,
                         help=f"Character id from character_cards.json (default: {DEFAULT_CHARACTER})")
-    parser.add_argument("--scene", required=True,
-                        help="Scene description appended to the character card")
+    parser.add_argument("--scene",
+                        help="Scene description appended to the character card "
+                             "(required unless --prompt-file is given)")
+    parser.add_argument("--prompt-file", default=None,
+                        help="Read the ENTIRE prompt from this UTF-8 text file, "
+                             "replacing the character card / scene / style builder")
+    parser.add_argument("--reference", action="append", default=None,
+                        metavar="PATH",
+                        help=f"Reference image for identity (repeatable, max "
+                             f"{MAX_REFERENCES}). Each is centre-cropped to a square "
+                             f"and scaled to {REFERENCE_SIZE}x{REFERENCE_SIZE} PNG")
     parser.add_argument("--width", type=int, default=DEFAULT_WIDTH,
                         help=f"Image width in pixels (default: {DEFAULT_WIDTH})")
     parser.add_argument("--height", type=int, default=DEFAULT_HEIGHT,
@@ -353,32 +488,89 @@ def main(argv=None):
     """Returns a process exit code. Never raises SystemExit, so it is testable."""
     args = parse_args(argv)
 
+    # Prompts are UTF-8 and may contain non-ASCII characters (accented names,
+    # em dashes). A Windows console defaults to cp1252, which raises on those,
+    # so stdout is set to replace unencodable characters instead of crashing.
     try:
-        cards_data = load_json(CHARACTER_CARDS_PATH)
-        config_data = load_json(SERIES_CONFIG_PATH)
-    except Exception as e:
-        logger.error(f"Could not read character_cards.json or series_config.json: {e}")
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
+    # --- prompt source: a file replaces the builder entirely -------------
+    if args.prompt_file and args.scene:
+        logger.error(
+            "Use either --scene or --prompt-file, not both. "
+            "--prompt-file supplies the whole prompt; --scene is appended to the card."
+        )
+        return 1
+    if not args.prompt_file and not args.scene:
+        logger.error("One of --scene or --prompt-file is required.")
         return 1
 
-    try:
-        card = get_character_card(cards_data, args.character)
-    except KeyError as e:
-        logger.error(str(e).strip("'\""))
+    references = args.reference or []
+    ok, ref_error = validate_reference_paths(references)
+    if not ok:
+        logger.error(ref_error)
         return 1
 
-    style_line = get_style_line(config_data)
-    prompt = build_prompt(card, args.scene, style_line)
-    card_fields, style_source = describe_prompt_sources(card, style_line)
+    out_dir = Path(args.out)
+
+    if args.prompt_file:
+        try:
+            prompt = read_prompt_file(args.prompt_file)
+        except RuntimeError as e:
+            logger.error(str(e))
+            return 1
+        prompt_source = f"file: {args.prompt_file}"
+        card = {}
+        card_fields, style_source = [], None
+    else:
+        try:
+            cards_data = load_json(CHARACTER_CARDS_PATH)
+            config_data = load_json(SERIES_CONFIG_PATH)
+        except Exception as e:
+            logger.error(f"Could not read character_cards.json or series_config.json: {e}")
+            return 1
+
+        try:
+            card = get_character_card(cards_data, args.character)
+        except KeyError as e:
+            logger.error(str(e).strip("'\""))
+            return 1
+
+        style_line = get_style_line(config_data)
+        prompt = build_prompt(card, args.scene, style_line)
+        card_fields, style_source = describe_prompt_sources(card, style_line)
+        prompt_source = "character card + scene + style"
+
+    # --- prepare references (ffmpeg) -------------------------------------
+    prepared_refs = []
+    if references:
+        try:
+            prepared_refs = prepare_references(references, out_dir)
+        except RuntimeError as e:
+            logger.error(str(e))
+            return 1
 
     if args.dry_run:
         print("=== DRY RUN — no network request ===")
-        print(f"character        : {args.character} ({card.get('full_name', '?')})")
-        print(f"card fields used : {', '.join(card_fields)}")
-        print(f"style source     : {style_source or '(none found)'}")
+        print(f"prompt source    : {prompt_source}")
+        if not args.prompt_file:
+            print(f"character        : {args.character} ({card.get('full_name', '?')})")
+            print(f"card fields used : {', '.join(card_fields)}")
+            print(f"style source     : {style_source or '(none found)'}")
         print(f"model            : {MODEL_ID}")
         print(f"endpoint         : {ENDPOINT_TEMPLATE.format(account_id='<ACCOUNT_ID masked>')}")
         print(f"width x height   : {args.width} x {args.height}")
         print(f"output folder    : {args.out}")
+        print(f"references       : {len(prepared_refs)} of max {MAX_REFERENCES}")
+        for index, (raw, prepared) in enumerate(zip(references, prepared_refs)):
+            pixels = probe_pixels(prepared) or "unknown"
+            print(f"  input_image_{index}:")
+            print(f"    original : {raw}")
+            print(f"    prepared : {prepared}")
+            print(f"    pixels   : {pixels}")
+            print(f"    bytes    : {prepared.stat().st_size}")
         print(f"prompt length    : {len(prompt)} characters")
         print("")
         print("--- PROMPT ---")
@@ -395,16 +587,18 @@ def main(argv=None):
         return 1
 
     endpoint = build_endpoint(account_id)
-    logger.info(f"Requesting {args.width}x{args.height} from {MODEL_ID}")
+    logger.info(f"Requesting {args.width}x{args.height} from {MODEL_ID} "
+                f"with {len(prepared_refs)} reference image(s)")
     logger.info(f"Endpoint: {ENDPOINT_TEMPLATE.format(account_id=mask_account_id(account_id))}")
 
     status, payload, attempts = request_with_retries(
-        endpoint, token, prompt, args.width, args.height
+        endpoint, token, prompt, args.width, args.height,
+        references=prepared_refs
     )
 
-    out_dir = Path(args.out)
     if status is not None:
-        append_usage_log(out_dir, args.width, args.height, status)
+        append_usage_log(out_dir, args.width, args.height, status,
+                         reference_count=len(prepared_refs))
 
     if status is None:
         logger.error("No response from Cloudflare; nothing saved.")
