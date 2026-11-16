@@ -11,6 +11,10 @@ Organises all episode files into clean per-platform upload folders:
 - Updates episode_log.json
 - Automatically syncs to Google Drive (/AshesBackup/Season1/) if credentials configured
 - Handles optional cleanup of intermediate working media
+
+The subtitled master is the only thing that ships. Falling back to the raw video
+requires --allow-raw, and deleting source media requires a confirmed Drive sync
+or --skip-drive together with --confirm-cleanup.
 """
 
 import os
@@ -43,6 +47,30 @@ logger = logging.getLogger("organise_output")
 
 PLATFORMS = ["tiktok", "facebook", "youtube"]
 
+# Intermediate media that cleanup may remove. Anything not listed here — the
+# final video, thumbnail, script, durations/timestamps JSON, prompts — is kept.
+CLEANUP_PATTERNS = [
+    "scene_*_audio.mp3",
+    "episode_*_raw.mp4",
+    "episode_*_voice.mp3",
+    "temp_*.*",
+    "concat_list.txt",
+    "scene_*.png",
+    "scene_*.jpg",
+]
+
+# Files cleanup must never delete, even if a pattern would match them.
+PROTECTED_SUFFIXES = [
+    "_final.mp4",
+    "_thumbnail.png",
+    "_script.txt",
+    "_scene_durations.json",
+    "_timestamps.json",
+    "_prompts.txt",
+    "_spoken.txt",
+    "_subtitles.ass",
+]
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Module 6: Output Organiser for Ashes of the Chosen")
@@ -51,6 +79,10 @@ def parse_arguments():
     parser.add_argument("--upload-dir", type=str, default="./upload-ready", help="Upload directory root")
     parser.add_argument("--skip-drive", action="store_true", help="Skip Google Drive sync")
     parser.add_argument("--cleanup", action="store_true", help="Delete source media after confirmed sync/staging")
+    parser.add_argument("--allow-raw", action="store_true",
+                        help="Ship the raw video if the subtitled master is missing (loud warning)")
+    parser.add_argument("--confirm-cleanup", action="store_true",
+                        help="Required with --cleanup --skip-drive: confirms deleting source media")
     return parser.parse_args()
 
 
@@ -59,6 +91,64 @@ def load_environment():
         "output_dir": os.getenv("EPISODE_OUTPUT_DIR", "./ashes-of-the-chosen"),
         "drive_creds": os.getenv("GOOGLE_DRIVE_CREDENTIALS", "")
     }
+
+
+def should_run_cleanup(cleanup_requested, drive_synced, skip_drive, confirm_cleanup):
+    """
+    Decides whether intermediate media may be deleted.
+
+    Returns (allowed, reason). Cleanup needs a backup: either a confirmed Drive
+    sync, or an explicit --skip-drive plus --confirm-cleanup. Deleting the only
+    copy of an episode's media because a flag was passed is not acceptable.
+    """
+    if not cleanup_requested:
+        return False, "cleanup not requested"
+
+    if drive_synced:
+        return True, "Drive sync confirmed"
+
+    if skip_drive:
+        if confirm_cleanup:
+            return True, "--skip-drive with --confirm-cleanup"
+        return False, ("--cleanup with --skip-drive also needs --confirm-cleanup: "
+                       "there is no backup of this episode's media")
+
+    return False, "Drive sync was not confirmed"
+
+
+def is_protected(path):
+    """True for files cleanup must never delete."""
+    name = Path(path).name
+    return any(name.endswith(suffix) for suffix in PROTECTED_SUFFIXES)
+
+
+def plan_cleanup(ep_dir):
+    """
+    Returns the list of files cleanup would delete, excluding protected ones.
+    Pure apart from reading the directory listing.
+    """
+    ep_dir = Path(ep_dir)
+    candidates = []
+    for pattern in CLEANUP_PATTERNS:
+        for f in ep_dir.glob(pattern):
+            if f.is_file() and not is_protected(f) and f not in candidates:
+                candidates.append(f)
+    return sorted(candidates)
+
+
+def cleanup_source_media(ep_dir, files=None):
+    """Deletes the planned intermediate files and reports what went."""
+    targets = files if files is not None else plan_cleanup(ep_dir)
+    deleted_count = 0
+    for f in targets:
+        try:
+            f.unlink()
+            deleted_count += 1
+        except Exception as e:
+            logger.warning(f"Could not delete {f}: {e}")
+
+    logger.info(f"Disk cleanup complete: removed {deleted_count} intermediate working file(s).")
+    return deleted_count
 
 
 def update_episode_log(log_path, episode_entry):
@@ -136,26 +226,33 @@ def sync_to_google_drive(creds_path, files_to_upload, folder_name="AshesBackup/S
         return False
 
 
-def cleanup_source_media(ep_dir):
-    patterns_to_delete = [
-        "scene_*_audio.mp3",
-        "episode_*_raw.mp4",
-        "episode_*_voice.mp3",
-        "temp_*.*",
-        "concat_list.txt",
-        "scene_*.png",
-        "scene_*.jpg"
-    ]
-    deleted_count = 0
-    for pat in patterns_to_delete:
-        for f in ep_dir.glob(pat):
-            try:
-                f.unlink()
-                deleted_count += 1
-            except Exception as e:
-                logger.warning(f"Could not delete {f}: {e}")
+def resolve_master_video(ep_dir, ep_str, allow_raw):
+    """
+    Picks the video to ship.
 
-    logger.info(f"Disk cleanup complete: removed {deleted_count} intermediate working files.")
+    Returns (path, used_raw). The subtitled master is required unless allow_raw
+    is set; a zero-byte file is never acceptable either way.
+    """
+    final_mp4 = ep_dir / f"episode_{ep_str}_final.mp4"
+    raw_mp4 = ep_dir / f"episode_{ep_str}_raw.mp4"
+
+    if final_mp4.exists():
+        if final_mp4.stat().st_size == 0:
+            raise ValueError(f"Final video is zero bytes: {final_mp4}")
+        return final_mp4, False
+
+    if not allow_raw:
+        raise FileNotFoundError(
+            f"Subtitled master missing: {final_mp4}. Run Module 5 first, "
+            f"or pass --allow-raw to ship the unsubtitled video."
+        )
+
+    if not raw_mp4.exists():
+        raise FileNotFoundError(f"No video file found to organise in {ep_dir}")
+    if raw_mp4.stat().st_size == 0:
+        raise ValueError(f"Raw video is zero bytes: {raw_mp4}")
+
+    return raw_mp4, True
 
 
 def main():
@@ -170,15 +267,17 @@ def main():
         logger.error(f"Episode directory not found: {ep_dir}")
         sys.exit(1)
 
-    final_mp4 = ep_dir / f"episode_{ep_str}_final.mp4"
-    if not final_mp4.exists():
-        raw_mp4 = ep_dir / f"episode_{ep_str}_raw.mp4"
-        if raw_mp4.exists():
-            logger.warning(f"Final subtitled video not found, falling back to raw video: {raw_mp4}")
-            final_mp4 = raw_mp4
-        else:
-            logger.error(f"No video file found to organise in {ep_dir}")
-            sys.exit(1)
+    try:
+        master_mp4, used_raw = resolve_master_video(ep_dir, ep_str, args.allow_raw)
+    except (FileNotFoundError, ValueError) as e:
+        logger.error(str(e))
+        sys.exit(1)
+
+    if used_raw:
+        logger.warning("=" * 70)
+        logger.warning("SHIPPING THE RAW VIDEO — IT HAS NO BURNED-IN SUBTITLES.")
+        logger.warning(f"Source: {master_mp4}")
+        logger.warning("=" * 70)
 
     thumbnail_path = ep_dir / f"episode_{ep_str}_thumbnail.png"
     if not thumbnail_path.exists():
@@ -193,7 +292,17 @@ def main():
         plat_dir = upload_root / plat
         plat_dir.mkdir(parents=True, exist_ok=True)
         dest_video = plat_dir / f"ep{ep_str}.mp4"
-        shutil.copy2(final_mp4, dest_video)
+        shutil.copy2(master_mp4, dest_video)
+
+        source_size = master_mp4.stat().st_size
+        dest_size = dest_video.stat().st_size
+        if dest_size != source_size:
+            logger.error(
+                f"Copy to {dest_video} is {dest_size} bytes but the source is "
+                f"{source_size} bytes. Aborting before anything is deleted."
+            )
+            sys.exit(1)
+
         platform_copies[plat] = str(dest_video.resolve())
 
         if thumbnail_path and thumbnail_path.exists():
@@ -204,7 +313,7 @@ def main():
 
     drive_synced = False
     if not args.skip_drive:
-        files_for_drive = [final_mp4]
+        files_for_drive = [master_mp4]
         if thumbnail_path and thumbnail_path.exists():
             files_for_drive.append(thumbnail_path)
         drive_synced = sync_to_google_drive(env["drive_creds"], files_for_drive)
@@ -214,7 +323,8 @@ def main():
         "episode": args.episode,
         "status": "upload_ready",
         "completed_at": datetime.now().isoformat(),
-        "final_mp4": str(final_mp4.resolve()),
+        "final_mp4": str(master_mp4.resolve()),
+        "shipped_raw_video": used_raw,
         "thumbnail": str(thumbnail_path.resolve()) if thumbnail_path and thumbnail_path.exists() else None,
         "upload_ready": platform_copies,
         "drive_synced": drive_synced,
@@ -222,11 +332,15 @@ def main():
     }
 
     if args.cleanup:
-        if drive_synced or args.skip_drive:
+        allowed, reason = should_run_cleanup(
+            args.cleanup, drive_synced, args.skip_drive, args.confirm_cleanup
+        )
+        if allowed:
+            logger.info(f"Cleanup approved ({reason}).")
             cleanup_source_media(ep_dir)
             episode_entry["source_media_deleted"] = True
         else:
-            logger.warning("Skipping cleanup because Drive sync was not confirmed. Use --skip-drive to force.")
+            logger.warning(f"Skipping cleanup: {reason}")
 
     update_episode_log(log_file, episode_entry)
     logger.info(f"Module 6 complete for Episode {args.episode}! Files ready for publishing.")

@@ -21,6 +21,7 @@ Baseline is tagged `baseline-v0`. S0 work is on `stage0-hygiene`; S1a work is on
 |---|---|---|---|---|
 | 001 | Stage 0 baseline and project hygiene | S0 | Complete | Docs only. Committed `56236ba` on `stage0-hygiene`. |
 | 002 | S1a: fix M2 word timing and stage-direction parsing | S1 | Coded and tested; awaiting user verification | B-01, B-02, B-12 fixed. Adds `tests/`, `episode_XX_spoken.txt`, `edge-tts>=7.3.1,<8`. |
+| 004 | Finish Phase A: repair M4, M5, M6 | S1 | Coded and tested; awaiting user verification | B-06, B-07, B-08, B-15, B-16, B-17 fixed. Adds `make_placeholders.py`, `check_episode.py`. |
 
 ---
 
@@ -136,6 +137,25 @@ collapses the running timeline for every later scene.
 
 Fixed in Brief 002: it raises `RuntimeError` instead, and `main()` reports it and exits 1.
 
+### B-15 — M5: caption blocks could overlap
+**Status:** Fixed, pending user verification
+
+`end = max(start + 0.4, end + 0.1)` could push a block past the next block's start,
+stacking captions. Blocks now end no later than the next starts, with a 0.10 s minimum
+visible time where there is room.
+
+### B-16 — M6: silent raw fallback and unsafe cleanup
+**Status:** Fixed, pending user verification
+
+Missing subtitled master silently shipped the raw video, and `--cleanup --skip-drive`
+deleted scene audio, images, raw video and voice with no backup. Raw now needs
+`--allow-raw`; cleanup needs a confirmed Drive sync, or `--skip-drive` plus
+`--confirm-cleanup`. Deliverables are never deleted; a zero-byte master is rejected.
+
+### B-17 — ffmpeg errors hidden
+**Status:** Fixed, pending user verification
+
+Every module discarded stderr on failure. Each now has a `run_ffmpeg(cmd, label)` helper that logs the last 15 stderr lines and exits 1.
 ---
 
 ## Stage history
