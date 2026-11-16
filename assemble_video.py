@@ -6,13 +6,16 @@ Pipeline v2.0 Corrected Edition
 Stitches scene images with voiceover audio and background music into a raw video file.
 - Reads scene durations from episode_XX_scene_durations.json
 - Automatically applies Ken Burns motion effects based on mood_templates.json
-- Assigns display time: total_scene_duration / images_in_scene
-- Background music at 20% volume beneath voiceover at 100% with 3s fade in/out
-- Applies FFmpeg loudnorm filter targeting -14 LUFS
+- Frame-accurate scheduling: scene i starts at sum of earlier (duration + buffer),
+  every boundary converted to a frame index with round(t * fps) so nothing drifts
+- Cover-fits every image to 9:16 (2x oversample, centre crop) before zoompan
+- Background music at 20% volume beneath voiceover at 100%
+- Two-pass FFmpeg loudnorm targeting -14 LUFS, output at 48 kHz
 - Output: 1080x1920 (9:16 vertical) episode_XX_raw.mp4
 """
 
 import os
+import re
 import sys
 import json
 import glob
@@ -44,6 +47,20 @@ TARGET_WIDTH = 1080
 TARGET_HEIGHT = 1920
 FPS = 25
 TARGET_LUFS = -14.0
+TARGET_TP = -1.5
+TARGET_LRA = 11
+SAMPLE_RATE = 48000
+
+# 2x oversample before zoompan so the Ken Burns move does not jitter on
+# low-resolution input, then crop back to 9:16.
+OVERSAMPLE_WIDTH = TARGET_WIDTH * 2
+OVERSAMPLE_HEIGHT = TARGET_HEIGHT * 2
+
+# Tolerance when comparing the muxed video length to the intended timeline.
+DURATION_TOLERANCE = 0.10
+
+DEFAULT_FADE_IN = 3.0
+DEFAULT_FADE_OUT = 3.0
 
 
 def parse_arguments():
@@ -53,6 +70,8 @@ def parse_arguments():
     parser.add_argument("--music", type=str, default=None, help="Path to background music file (default: ./assets/music/background_music.mp3)")
     parser.add_argument("--mood-templates", type=str, default="./mood_templates.json", help="Path to mood_templates.json")
     parser.add_argument("--force", action="store_true", help="Force overwrite of existing raw video")
+    parser.add_argument("--fade-in", type=float, default=DEFAULT_FADE_IN, help="Fade-in duration in seconds (default: 3.0)")
+    parser.add_argument("--fade-out", type=float, default=DEFAULT_FADE_OUT, help="Fade-out duration in seconds (default: 3.0)")
     return parser.parse_args()
 
 
@@ -70,6 +89,25 @@ def load_mood_templates(path):
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     return data.get("moods", {})
+
+
+def run_ffmpeg(cmd, label):
+    """
+    Runs an ffmpeg command. On non-zero exit, logs the last 15 stderr lines and
+    exits 1 — a CalledProcessError with hidden stderr tells nobody anything.
+    """
+    logger.info(f"FFmpeg: {label}")
+    proc = subprocess.run(
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, errors="replace"
+    )
+    if proc.returncode != 0:
+        tail = (proc.stderr or "").strip().splitlines()[-15:]
+        logger.error(f"FFmpeg failed during {label} (exit {proc.returncode}). Last {len(tail)} stderr lines:")
+        for line in tail:
+            logger.error(f"  {line}")
+        sys.exit(1)
+    return proc
 
 
 def get_zoompan_filter(motion_effect, duration_seconds, fps=FPS, width=TARGET_WIDTH, height=TARGET_HEIGHT):
@@ -105,20 +143,82 @@ def get_zoompan_filter(motion_effect, duration_seconds, fps=FPS, width=TARGET_WI
         )
 
 
-def render_image_clip(img_path, duration_seconds, motion_effect, out_clip_path):
-    filter_expr = get_zoompan_filter(motion_effect, duration_seconds)
+def compute_scene_schedule(scenes_meta, buffer_seconds, total_duration_seconds,
+                           images_per_scene, fps=FPS):
+    """
+    Builds the frame-exact schedule for every image clip.
+
+    Scene i spans [S_i, E_i) where S_i is the sum over earlier scenes of
+    (duration + buffer). Every scene but the last ends where the next one starts;
+    the last scene ends at total_duration_seconds, absorbing the rounding (and any
+    trailing encoder padding in the joined audio).
+
+    Boundaries are converted to frame indices with round(t * fps) and differenced,
+    so error never accumulates. Each scene's frame span is split equally across its
+    images, with the remainder going to the earlier images. Every clip gets at
+    least one frame.
+
+    Returns a list of {"scene", "image_index", "frames"} in playback order.
+    """
+    if not scenes_meta:
+        return []
+
+    starts = []
+    elapsed = 0.0
+    for sc in scenes_meta:
+        starts.append(elapsed)
+        elapsed += float(sc["duration_seconds"]) + float(buffer_seconds)
+
+    bounds = [int(round(t * fps)) for t in starts]
+    bounds.append(int(round(float(total_duration_seconds) * fps)))
+
+    schedule = []
+    for i, sc in enumerate(scenes_meta):
+        frame_start, frame_end = bounds[i], bounds[i + 1]
+        span = max(0, frame_end - frame_start)
+        count = max(1, int(images_per_scene.get(sc["scene"], 1)))
+        base, remainder = divmod(span, count)
+        for image_index in range(count):
+            frames = base + (1 if image_index < remainder else 0)
+            schedule.append({
+                "scene": sc["scene"],
+                "image_index": image_index,
+                "frames": max(1, frames),
+            })
+    return schedule
+
+
+def render_image_clip(img_path, frames, motion_effect, out_clip_path):
+    """
+    Renders one image to exactly `frames` frames.
+
+    Cover-fit first (scale up, centre crop, 2x oversample) so non-9:16 source
+    images are cropped rather than stretched, then the Ken Burns move, then
+    yuv420p. -frames:v pins the length exactly instead of -t, which would let the
+    clip run long and desync the timeline.
+    """
+    frames = max(1, int(frames))
+    # get_zoompan_filter derives its own frame count from a duration; feeding it
+    # frames/fps makes that round-trip land back on exactly `frames`.
+    zoompan = get_zoompan_filter(motion_effect, frames / float(FPS))
+    vf = (
+        f"scale={OVERSAMPLE_WIDTH}:{OVERSAMPLE_HEIGHT}:"
+        f"force_original_aspect_ratio=increase:flags=lanczos,"
+        f"crop={OVERSAMPLE_WIDTH}:{OVERSAMPLE_HEIGHT},setsar=1,"
+        f"{zoompan},format=yuv420p"
+    )
     cmd = [
         "ffmpeg", "-y",
         "-loop", "1",
         "-i", str(img_path),
-        "-vf", f"{filter_expr},format=yuv420p",
-        "-t", str(duration_seconds),
+        "-vf", vf,
+        "-frames:v", str(frames),
         "-c:v", "libx264",
         "-preset", "veryfast",
         "-crf", "18",
         str(out_clip_path)
     ]
-    subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+    run_ffmpeg(cmd, f"render clip {Path(out_clip_path).name} ({frames} frames)")
 
 
 def find_scene_images(ep_dir, scene_num):
@@ -140,12 +240,138 @@ def find_scene_images(ep_dir, scene_num):
     return matched
 
 
+def parse_loudnorm_json(stderr_text):
+    """
+    Pulls the loudnorm measurement block out of ffmpeg stderr.
+    Returns the parsed dict, or None if no measurement block is present.
+    """
+    for match in re.finditer(r"\{[^{}]*\}", stderr_text or "", re.S):
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            continue
+        if "input_i" in data:
+            return data
+    return None
+
+
+def build_loudnorm_filter(measured=None):
+    """loudnorm filter string: measuring on pass 1, applying on pass 2."""
+    base = f"loudnorm=I={TARGET_LUFS}:TP={TARGET_TP}:LRA={TARGET_LRA}"
+    if measured is None:
+        return f"{base}:print_format=json"
+    return (
+        f"{base}"
+        f":measured_I={measured['input_i']}"
+        f":measured_LRA={measured['input_lra']}"
+        f":measured_TP={measured['input_tp']}"
+        f":measured_thresh={measured['input_thresh']}"
+        f":offset={measured['target_offset']}"
+        f":linear=true"
+    )
+
+
+def build_audio_chain(voice_idx, music_idx, fade_in, fade_out_start, fade_out, measured=None):
+    """
+    Builds the audio half of the filter graph. Same graph on both loudnorm passes
+    so the measurement applies to exactly what gets encoded.
+    """
+    loud = build_loudnorm_filter(measured)
+    parts = []
+    if music_idx is not None:
+        parts.append(f"[{voice_idx}:a]volume=1.0[v_voice]")
+        parts.append(
+            f"[{music_idx}:a]volume=0.2,"
+            f"afade=t=in:st=0:d={fade_in},"
+            f"afade=t=out:st={fade_out_start:.2f}:d={fade_out}[v_music]"
+        )
+        parts.append(
+            f"[v_voice][v_music]amix=inputs=2:duration=first:dropout_transition=2,"
+            f"{loud},aresample={SAMPLE_RATE}[aout]"
+        )
+    else:
+        parts.append(f"[{voice_idx}:a]{loud},aresample={SAMPLE_RATE}[aout]")
+    return ";".join(parts)
+
+
+def measure_loudness(voice_path, music_path, fade_in, fade_out_start, fade_out):
+    """
+    Pass 1: runs the audio graph to a null sink with loudnorm measuring, and
+    returns the measurement block. Exits 1 if ffmpeg gives us nothing to parse.
+    """
+    cmd = ["ffmpeg", "-hide_banner", "-nostats", "-i", str(voice_path)]
+    if music_path:
+        cmd += ["-stream_loop", "-1", "-i", str(music_path)]
+    music_idx = 1 if music_path else None
+    chain = build_audio_chain(0, music_idx, fade_in, fade_out_start, fade_out, measured=None)
+    cmd += ["-filter_complex", chain, "-map", "[aout]", "-f", "null", "-"]
+
+    proc = run_ffmpeg(cmd, "loudness measurement pass (loudnorm)")
+    measured = parse_loudnorm_json(proc.stderr)
+    if measured is None:
+        logger.error("Could not parse loudnorm measurements from FFmpeg output.")
+        logger.error("Last 15 stderr lines:")
+        for line in (proc.stderr or "").strip().splitlines()[-15:]:
+            logger.error(f"  {line}")
+        sys.exit(1)
+    logger.info(
+        f"Measured loudness: I={measured.get('input_i')} LUFS, "
+        f"TP={measured.get('input_tp')} dBTP, LRA={measured.get('input_lra')} LU"
+    )
+    return measured
+
+
+def probe_duration(path):
+    """Returns the container duration in seconds, or None if ffprobe fails."""
+    proc = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+         "-of", "default=nw=1:nk=1", str(path)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, errors="replace"
+    )
+    if proc.returncode != 0:
+        return None
+    try:
+        return float(proc.stdout.strip())
+    except ValueError:
+        return None
+
+
+def pick_motion_effect(sc_mood, moods_config):
+    if sc_mood in moods_config:
+        return moods_config[sc_mood].get("motion_effect", "slow_zoom_in")
+    if "supernatural" in sc_mood:
+        return "static_slight_zoom"
+    if "wilderness" in sc_mood:
+        return "slow_zoom_out"
+    if "covenant" in sc_mood or "villain" in sc_mood:
+        return "pan_right_to_left"
+    return "slow_zoom_in"
+
+
+def find_music_file(cli_music):
+    candidates = [
+        cli_music,
+        "./assets/music/background_music.mp3",
+        "./assets/music/background.mp3",
+        "../assets/music/background_music.mp3"
+    ]
+    for c in candidates:
+        if c and os.path.exists(c):
+            return Path(c)
+    music_dir = Path("./assets/music")
+    if music_dir.exists():
+        music_assets = list(music_dir.glob("*.mp3"))
+        if music_assets:
+            return music_assets[0]
+    return None
+
+
 def main():
     args = parse_arguments()
     base_out_dir = Path(args.output_dir or load_environment())
     ep_str = f"{args.episode:02d}"
     ep_dir = base_out_dir / f"episode-{ep_str}"
-    
+
     if not ep_dir.exists():
         logger.error(f"Episode directory not found: {ep_dir}")
         sys.exit(1)
@@ -165,52 +391,68 @@ def main():
 
     moods_config = load_mood_templates(args.mood_templates)
     scenes_meta = durations_data.get("scenes", [])
-    total_audio_duration = durations_data.get("total_duration_seconds", 0.0)
+    total_duration = float(durations_data.get("total_duration_seconds", 0.0))
+    buffer_seconds = float(durations_data.get("buffer_seconds_between_scenes", 0.2))
+
+    if not scenes_meta:
+        logger.error(f"No scenes listed in {durations_json_path}.")
+        sys.exit(1)
+    if total_duration <= 0:
+        logger.error(f"total_duration_seconds is missing or zero in {durations_json_path}.")
+        sys.exit(1)
 
     voice_path = ep_dir / f"episode_{ep_str}_voice.mp3"
     if not voice_path.exists():
         logger.error(f"Missing voiceover audio: {voice_path}")
         sys.exit(1)
 
+    # Collect images for every scene up front. A scene with no images is a hard
+    # failure — silently borrowing another scene's png is how the wrong picture
+    # ends up in the video.
+    scene_images = {}
+    images_per_scene = {}
+    for sc in scenes_meta:
+        sc_num = sc["scene"]
+        images = find_scene_images(ep_dir, sc_num)
+        if not images:
+            logger.error(
+                f"Scene {sc_num} has no images in {ep_dir}. "
+                f"Expected files matching scene_{sc_num:02d}*.png/.jpg. "
+                f"Run make_placeholders.py or generate the scene images first."
+            )
+            sys.exit(1)
+        scene_images[sc_num] = images
+        images_per_scene[sc_num] = len(images)
+
+    schedule = compute_scene_schedule(
+        scenes_meta, buffer_seconds, total_duration, images_per_scene, FPS
+    )
+    total_frames = sum(item["frames"] for item in schedule)
+    logger.info(
+        f"Schedule: {len(schedule)} clip(s) across {len(scenes_meta)} scene(s), "
+        f"{total_frames} frames ({total_frames / FPS:.2f}s) at {FPS} fps"
+    )
+
     temp_clips_dir = ep_dir / "temp_clips"
     temp_clips_dir.mkdir(exist_ok=True)
-    clip_files = []
     temp_video_only = ep_dir / f"temp_{ep_str}_video_only.mp4"
+    clip_files = []
 
     try:
-        clip_index = 0
-        for sc in scenes_meta:
-            sc_num = sc["scene"]
-            sc_dur = sc["duration_seconds"]
+        for item in schedule:
+            sc_num = item["scene"]
+            sc = next(s for s in scenes_meta if s["scene"] == sc_num)
             sc_mood = sc.get("mood", "romance_tension")
+            motion_effect = pick_motion_effect(sc_mood, moods_config)
+            img = scene_images[sc_num][item["image_index"]]
 
-            motion_effect = "slow_zoom_in"
-            if sc_mood in moods_config:
-                motion_effect = moods_config[sc_mood].get("motion_effect", "slow_zoom_in")
-            elif "supernatural" in sc_mood:
-                motion_effect = "static_slight_zoom"
-            elif "wilderness" in sc_mood:
-                motion_effect = "slow_zoom_out"
-            elif "covenant" in sc_mood or "villain" in sc_mood:
-                motion_effect = "pan_right_to_left"
-
-            images = find_scene_images(ep_dir, sc_num)
-            if not images:
-                logger.warning(f"No images found for Scene {sc_num}! Looking for fallback or placeholder...")
-                fallback_imgs = list(ep_dir.glob("*.png"))
-                if fallback_imgs:
-                    images = [fallback_imgs[0]]
-                else:
-                    raise FileNotFoundError(f"No images found for Scene {sc_num} in {ep_dir}")
-
-            img_duration = sc_dur / len(images)
-            logger.info(f"Scene {sc_num} ({sc_mood}): {len(images)} image(s), {img_duration:.2f}s each, motion: {motion_effect}")
-
-            for img in images:
-                clip_index += 1
-                clip_out = temp_clips_dir / f"clip_{clip_index:03d}.mp4"
-                render_image_clip(img, img_duration, motion_effect, clip_out)
-                clip_files.append(clip_out)
+            clip_out = temp_clips_dir / f"clip_{sc_num:02d}_{item['image_index'] + 1:02d}.mp4"
+            logger.info(
+                f"Scene {sc_num} ({sc_mood}) image {item['image_index'] + 1}/"
+                f"{images_per_scene[sc_num]}: {item['frames']} frames, motion: {motion_effect}"
+            )
+            render_image_clip(img, item["frames"], motion_effect, clip_out)
+            clip_files.append(clip_out)
 
         concat_list_file = temp_clips_dir / "video_concat_list.txt"
         with open(concat_list_file, "w", encoding="utf-8") as f:
@@ -218,85 +460,73 @@ def main():
                 clean_path = str(c.resolve()).replace(os.sep, "/")
                 f.write(f"file '{clean_path}'\n")
 
-        cmd_concat = [
-            "ffmpeg", "-y",
-            "-f", "concat",
-            "-safe", "0",
-            "-i", str(concat_list_file),
-            "-c", "copy",
-            str(temp_video_only)
-        ]
-        logger.info("Concatenating all image clips...")
-        subprocess.run(cmd_concat, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        run_ffmpeg(
+            ["ffmpeg", "-y", "-f", "concat", "-safe", "0",
+             "-i", str(concat_list_file), "-c", "copy", str(temp_video_only)],
+            "concatenate image clips"
+        )
 
-        music_file = None
-        candidates = [
-            args.music,
-            "./assets/music/background_music.mp3",
-            "./assets/music/background.mp3",
-            "../assets/music/background_music.mp3"
-        ]
-        for c in candidates:
-            if c and os.path.exists(c):
-                music_file = Path(c)
-                break
-        if not music_file:
-            music_assets = list(Path("./assets/music").glob("*.mp3")) if Path("./assets/music").exists() else []
-            if music_assets:
-                music_file = music_assets[0]
+        music_file = find_music_file(args.music)
+        fade_out_start = max(0.0, total_duration - float(args.fade_out))
 
-        fade_out_start = max(0.0, total_audio_duration - 3.0)
-        
         if music_file:
-            logger.info(f"Mixing voiceover with background music: {music_file} (20% vol, 3s fade)")
-            filter_complex = (
-                f"[0:v]fade=t=in:st=0:d=3,fade=t=out:st={fade_out_start:.2f}:d=3[vout];"
-                f"[1:a]volume=1.0[v_voice];"
-                f"[2:a]volume=0.2,afade=t=in:st=0:d=3,afade=t=out:st={fade_out_start:.2f}:d=3[v_music];"
-                f"[v_voice][v_music]amix=inputs=2:duration=first:dropout_transition=2,"
-                f"loudnorm=I={TARGET_LUFS}:TP=-1.5:LRA=11[aout]"
+            logger.info(
+                f"Mixing voiceover with background music: {music_file} "
+                f"(20% vol, {args.fade_in}s fade in, {args.fade_out}s fade out)"
             )
-            cmd_mix = [
-                "ffmpeg", "-y",
-                "-i", str(temp_video_only),
-                "-i", str(voice_path),
-                "-stream_loop", "-1",
-                "-i", str(music_file),
-                "-filter_complex", filter_complex,
-                "-map", "[vout]",
-                "-map", "[aout]",
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "18",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-shortest",
-                str(raw_video_path)
-            ]
         else:
-            logger.warning("No background music found. Assembling with voiceover only and -14 LUFS normalisation.")
-            filter_complex = (
-                f"[0:v]fade=t=in:st=0:d=3,fade=t=out:st={fade_out_start:.2f}:d=3[vout];"
-                f"[1:a]loudnorm=I={TARGET_LUFS}:TP=-1.5:LRA=11[aout]"
-            )
-            cmd_mix = [
-                "ffmpeg", "-y",
-                "-i", str(temp_video_only),
-                "-i", str(voice_path),
-                "-filter_complex", filter_complex,
-                "-map", "[vout]",
-                "-map", "[aout]",
-                "-c:v", "libx264",
-                "-preset", "fast",
-                "-crf", "18",
-                "-c:a", "aac",
-                "-b:a", "192k",
-                "-shortest",
-                str(raw_video_path)
-            ]
+            logger.warning("No background music found. Assembling with voiceover only.")
 
-        logger.info("Running FFmpeg assembly and -14 LUFS loudness normalisation pass...")
-        subprocess.run(cmd_mix, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        measured = measure_loudness(
+            voice_path, music_file, args.fade_in, fade_out_start, args.fade_out
+        )
+
+        video_chain = (
+            f"[0:v]fade=t=in:st=0:d={args.fade_in},"
+            f"fade=t=out:st={fade_out_start:.2f}:d={args.fade_out}[vout]"
+        )
+        music_idx = 2 if music_file else None
+        audio_chain = build_audio_chain(
+            1, music_idx, args.fade_in, fade_out_start, args.fade_out, measured=measured
+        )
+        filter_complex = f"{video_chain};{audio_chain}"
+
+        cmd_mix = ["ffmpeg", "-y", "-i", str(temp_video_only), "-i", str(voice_path)]
+        if music_file:
+            cmd_mix += ["-stream_loop", "-1", "-i", str(music_file)]
+        cmd_mix += [
+            "-filter_complex", filter_complex,
+            "-map", "[vout]",
+            "-map", "[aout]",
+            "-c:v", "libx264",
+            "-preset", "fast",
+            "-crf", "18",
+            "-c:a", "aac",
+            "-b:a", "192k",
+            "-ar", str(SAMPLE_RATE),
+            "-movflags", "+faststart",
+            "-shortest",
+            str(raw_video_path)
+        ]
+        run_ffmpeg(cmd_mix, "final mux with two-pass loudnorm")
+
+        out_duration = probe_duration(raw_video_path)
+        if out_duration is None:
+            logger.error(f"Could not probe the assembled video: {raw_video_path}")
+            sys.exit(1)
+        drift = abs(out_duration - total_duration)
+        if drift > DURATION_TOLERANCE:
+            logger.error(
+                f"Assembled video is {out_duration:.3f}s but the timeline is "
+                f"{total_duration:.3f}s (drift {drift:.3f}s > {DURATION_TOLERANCE}s). "
+                f"Audio and picture would be out of sync."
+            )
+            sys.exit(1)
+        logger.info(
+            f"Duration check: video {out_duration:.3f}s vs timeline "
+            f"{total_duration:.3f}s (drift {drift:.3f}s)"
+        )
+
         logger.info(f"Module 4 complete! Raw video assembled at: {raw_video_path}")
 
     finally:
