@@ -21,6 +21,7 @@ Baseline is tagged `baseline-v0`. S0 work is on `stage0-hygiene`; S1a work is on
 |---|---|---|---|---|
 | 001 | Stage 0 baseline and project hygiene | S0 | Complete | Docs only. Committed `56236ba` on `stage0-hygiene`. |
 | 002 | S1a: fix M2 word timing and stage-direction parsing | S1 | Coded and tested; awaiting user verification | B-01, B-02, B-12 fixed. Adds `tests/`, `episode_XX_spoken.txt`, `edge-tts>=7.3.1,<8`. |
+| 003 | S1b: harden M1 (validate, retry, fail cleanly) | S1 | Coded and tested; awaiting user verification | B-03, B-13, B-14 fixed. Draft-then-validate via M2's parser; adds `--print-prompt`. |
 | 004 | Finish Phase A: repair M4, M5, M6 | S1 | Coded and tested; awaiting user verification | B-06, B-07, B-08, B-15, B-16, B-17 fixed. Adds `make_placeholders.py`, `check_episode.py`. |
 
 ---
@@ -58,11 +59,15 @@ Mid-sentence parentheses are preserved. `validate_scenes` then refuses to procee
 scene is empty or still contains `Visual:`.
 
 ### B-03 — M1: no enforcement of the word range or finish reason
-**Status:** Open
+**Status:** Fixed, pending user verification
 
 `max_output_tokens=1024` on a thinking model, with no `finish_reason` check. The 150-220
-word range is only logged (`generate_script.py` line 249), never enforced. An invalid or
-truncated script is written to disk anyway.
+word range was only logged, never enforced. An invalid or truncated script was written to
+disk anyway.
+
+Fixed in Brief 003: `MAX_OUTPUT_TOKENS=8192`; finish reason checked (enum and int forms,
+STOP/1 only); draft-then-validate with up to 3 attempts; the final file is only replaced
+atomically after validation passes.
 
 ### B-04 — M1: continuity inputs are read but never written
 **Status:** Open
@@ -136,6 +141,22 @@ A zero duration silently corrupts `episode_XX_scene_durations.json` (which M4 cu
 collapses the running timeline for every later scene.
 
 Fixed in Brief 002: it raises `RuntimeError` instead, and `main()` reports it and exits 1.
+
+### B-13 — M1: speaker labels and markdown could be spoken
+**Status:** Fixed, pending user verification
+
+The prompt allowed "spoken dialogue" with no format rule, so `ADA: ...` labels and markdown
+(`**`, `#`, backticks) could reach the TTS and be read aloud. Validation now rejects speaker
+labels at sentence starts, `#`, and backticks; `normalise_script` strips code fences and
+emphasis markers first.
+
+### B-14 — M1: rate-limit false positive
+**Status:** Fixed, pending user verification
+
+`is_rate_limit` matched any error containing the bare word "rate", which also matches
+"generate". Failures were treated as throttling and retried on the long backoff. Detection
+now requires one of "429", "quota", "resource_exhausted", "rate limit", "rate_limit",
+"too many requests".
 
 ### B-15 — M5: caption blocks could overlap
 **Status:** Fixed, pending user verification
