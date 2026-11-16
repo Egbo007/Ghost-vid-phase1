@@ -23,6 +23,7 @@ Baseline is tagged `baseline-v0`. S0 work is on `stage0-hygiene`; S1a work is on
 | 002 | S1a: fix M2 word timing and stage-direction parsing | S1 | Coded and tested; awaiting user verification | B-01, B-02, B-12 fixed. Adds `tests/`, `episode_XX_spoken.txt`, `edge-tts>=7.3.1,<8`. |
 | 003 | S1b: harden M1 (validate, retry, fail cleanly) | S1 | Coded and tested; awaiting user verification | B-03, B-13, B-14 fixed. Draft-then-validate via M2's parser; adds `--print-prompt`. |
 | 004 | Finish Phase A: repair M4, M5, M6 | S1 | Coded and tested; awaiting user verification | B-06, B-07, B-08, B-15, B-16, B-17 fixed. Adds `make_placeholders.py`, `check_episode.py`. |
+| 005 | S1c: fix silence-buffer timing drift | S1 | Coded and tested; awaiting user verification | B-18 fixed. Root cause was the concat step, not the silence length; see B-18. |
 
 ---
 
@@ -177,6 +178,17 @@ deleted scene audio, images, raw video and voice with no backup. Raw now needs
 **Status:** Fixed, pending user verification
 
 Every module discarded stderr on failure. Each now has a `run_ffmpeg(cmd, label)` helper that logs the last 15 stderr lines and exits 1.
+
+### B-18 — M2: timeline drift from the concat step
+**Status:** Fixed, pending user verification
+
+Timestamps and cuts for scene k ran early by about k x 0.06 s. The silence buffer was
+blamed, and Brief 004 called the excess "per-scene MP3 padding". Both were wrong: the
+silence measures exactly the 0.200 s requested. `-c copy` concat drops each file's MP3
+gapless header, so every join padded to a whole 1152-sample frame (~0.124 s at 24 kHz);
+episode 99 joined at 61.032 s vs 60.736 s predicted. M2 now re-encodes at concat
+(`libmp3lame` 48 kbps) and measures the silence: joined 60.736 s, delta +0.000 s, offset a
+constant +0.096 s. The voice check enforces +/-0.05 s and per-scene windows.
 ---
 
 ## Stage history

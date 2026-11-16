@@ -241,19 +241,63 @@ class TestVoiceStage(unittest.TestCase):
             report, _ = self.run_voice(tmp, total=70.0)
         self.assertEqual(report.failures, 1)
 
-    def test_encoder_padding_excess_is_accepted(self):
-        """Real M2 output runs ~0.05s/scene long; that must not be a failure."""
+    def test_old_0_29s_drift_now_fails(self):
+        """
+        The real B-18 case: the joined audio ran 0.29s long because the concat
+        step padded each MP3 join. Brief 004 allowed that as "per-scene padding";
+        it must now fail.
+        """
         with tempfile.TemporaryDirectory() as tmp:
             base, ep_dir = make_episode(tmp)
-            # 2 scenes: scene sum 19.99s, +0.29s of padding is normal.
             durations = ep_dir / "episode_99_scene_durations.json"
             data = json.loads(durations.read_text(encoding="utf-8"))
-            data["total_duration_seconds"] = 20.28
+            predicted = (sum(s["duration_seconds"] for s in data["scenes"])
+                         + data["buffer_seconds_between_scenes"] * (len(data["scenes"]) - 1))
+            data["total_duration_seconds"] = round(predicted + 0.29, 3)
             durations.write_text(json.dumps(data), encoding="utf-8")
             (ep_dir / "episode_99_voice.mp3").write_bytes(b"fake")
 
             report = ce.Report()
-            with mock.patch.object(ce, "probe_duration", return_value=20.28):
+            with mock.patch.object(ce, "probe_duration",
+                                   return_value=data["total_duration_seconds"]):
+                with redirect_stdout(io.StringIO()):
+                    ce.check_voice(report, ep_dir, "99")
+        self.assertEqual(report.failures, 1, report.lines)
+
+    def test_consistent_timeline_passes(self):
+        """Measured buffer in the JSON means the prediction is exact."""
+        with tempfile.TemporaryDirectory() as tmp:
+            base, ep_dir = make_episode(tmp)
+            durations = ep_dir / "episode_99_scene_durations.json"
+            data = json.loads(durations.read_text(encoding="utf-8"))
+            data["buffer_seconds_between_scenes"] = 0.264
+            data["total_duration_seconds"] = round(
+                sum(s["duration_seconds"] for s in data["scenes"])
+                + 0.264 * (len(data["scenes"]) - 1), 3)
+            durations.write_text(json.dumps(data), encoding="utf-8")
+            (ep_dir / "episode_99_voice.mp3").write_bytes(b"fake")
+
+            report = ce.Report()
+            with mock.patch.object(ce, "probe_duration",
+                                   return_value=data["total_duration_seconds"]):
+                with redirect_stdout(io.StringIO()):
+                    ce.check_voice(report, ep_dir, "99")
+        self.assertEqual(report.failures, 0, report.lines)
+
+    def test_small_excess_within_tolerance_passes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base, ep_dir = make_episode(tmp)
+            durations = ep_dir / "episode_99_scene_durations.json"
+            data = json.loads(durations.read_text(encoding="utf-8"))
+            predicted = (sum(s["duration_seconds"] for s in data["scenes"])
+                         + data["buffer_seconds_between_scenes"] * (len(data["scenes"]) - 1))
+            data["total_duration_seconds"] = round(predicted + 0.04, 3)
+            durations.write_text(json.dumps(data), encoding="utf-8")
+            (ep_dir / "episode_99_voice.mp3").write_bytes(b"fake")
+
+            report = ce.Report()
+            with mock.patch.object(ce, "probe_duration",
+                                   return_value=data["total_duration_seconds"]):
                 with redirect_stdout(io.StringIO()):
                     ce.check_voice(report, ep_dir, "99")
         self.assertEqual(report.failures, 0, report.lines)
@@ -294,7 +338,8 @@ class TestVoiceStage(unittest.TestCase):
         ]
         with tempfile.TemporaryDirectory() as tmp:
             report, _ = self.run_voice(tmp, words=words)
-        self.assertEqual(report.failures, 1)
+        # Fails both the last-word bound and the scene window; at least one.
+        self.assertGreaterEqual(report.failures, 1)
 
     def test_word_count_mismatch_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -315,6 +360,79 @@ class TestVoiceStage(unittest.TestCase):
             with redirect_stdout(io.StringIO()):
                 ce.check_voice(report, ep_dir, "99")
         self.assertEqual(report.failures, 1)
+
+
+class TestSceneWordWindows(unittest.TestCase):
+    """
+    check_voice: every word must sit inside its own scene's window.
+
+    This is the check that catches a drift the totals hide — the joined file can
+    be the right length while scene 6's words sit 0.3s early.
+    """
+
+    def run_with_words(self, tmp, words):
+        base, ep_dir = make_episode(tmp, words=words)
+        (ep_dir / "episode_99_voice.mp3").write_bytes(b"fake")
+        durations = ep_dir / "episode_99_scene_durations.json"
+        data = json.loads(durations.read_text(encoding="utf-8"))
+        total = data["total_duration_seconds"]
+        report = ce.Report()
+        with mock.patch.object(ce, "probe_duration", return_value=total):
+            with redirect_stdout(io.StringIO()):
+                ce.check_voice(report, ep_dir, "99")
+        return report
+
+    def test_words_in_correct_windows_pass(self):
+        # Scene 1: 0.000-8.330, scene 2 starts at 8.530.
+        words = [
+            {"word": "They", "start": 0.10, "end": 0.30, "scene": 1},
+            {"word": "came", "start": 8.60, "end": 8.90, "scene": 2},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self.run_with_words(tmp, words)
+        self.assertEqual(report.failures, 0, report.lines)
+
+    def test_word_placed_in_wrong_scene_window_fails(self):
+        """A scene-2 word timestamped inside scene 1 must be caught."""
+        words = [
+            {"word": "They", "start": 0.10, "end": 0.30, "scene": 1},
+            {"word": "came", "start": 2.00, "end": 2.30, "scene": 2},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self.run_with_words(tmp, words)
+        self.assertEqual(report.failures, 1, report.lines)
+        self.assertTrue(
+            any("scene 2" in line and "outside window" in line for line in report.lines),
+            report.lines
+        )
+
+    def test_late_scene_words_caught(self):
+        """Scene 2's words pushed past its window end must be caught."""
+        words = [
+            {"word": "They", "start": 0.10, "end": 0.30, "scene": 1},
+            {"word": "came", "start": 20.50, "end": 20.80, "scene": 2},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self.run_with_words(tmp, words)
+        self.assertGreaterEqual(report.failures, 1, report.lines)
+
+    def test_slack_allows_small_overshoot(self):
+        """A word just inside the 0.10s slack must not fail."""
+        # Scene 1 window ends 8.330 + 0.10 slack = 8.430.
+        words = [
+            {"word": "They", "start": 0.10, "end": 8.40, "scene": 1},
+            {"word": "came", "start": 8.60, "end": 8.90, "scene": 2},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self.run_with_words(tmp, words)
+        self.assertEqual(report.failures, 0, report.lines)
+
+    def test_scene_with_no_words_warns(self):
+        words = [{"word": "They", "start": 0.10, "end": 0.30, "scene": 1}]
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self.run_with_words(tmp, words)
+        self.assertTrue(any("no words timestamped" in line for line in report.lines),
+                        report.lines)
 
 
 class TestRawStage(unittest.TestCase):

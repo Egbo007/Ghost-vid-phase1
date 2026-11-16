@@ -32,13 +32,12 @@ DEFAULT_OUTPUT_DIR = "./ashes-of-the-chosen"
 DEFAULT_UPLOAD_DIR = "./upload-ready"
 
 # Tolerances, in seconds unless noted.
-TIMELINE_TOLERANCE = 0.15
+# The joined audio must equal sum(durations) + buffers: both sides are measured
+# by M2, so this is tight and symmetric.
+TIMELINE_TOLERANCE = 0.05
 DURATION_TOLERANCE = 0.10
-# Each scene mp3 carries a little encoder padding, so the joined audio runs
-# slightly longer than sum(durations) + buffers. Measured at ~0.05s per scene on
-# real output; 0.10s per scene is a generous ceiling that still catches a real
-# timeline bug.
-PADDING_PER_SCENE = 0.10
+# A word may sit this far outside its scene's window before it counts as misplaced.
+SCENE_WINDOW_SLACK = 0.10
 FIRST_WORD_MAX_START = 0.5
 LAST_WORD_SLACK = 0.2
 LUFS_MIN = -15.0
@@ -261,19 +260,19 @@ def check_voice(report, ep_dir, ep_str):
         return
 
     # Timeline: scene i starts at the sum of earlier (duration + buffer), so the
-    # joined audio should be sum(durations) + buffers. In practice it is slightly
-    # LONGER: each scene mp3 carries encoder padding, and that accumulates per
-    # scene (0.29s over 6 scenes on real episode 99). Padding can only add length,
-    # so a shortfall is a real problem while a bounded excess is expected.
+    # joined audio must be sum(durations) + buffers. Both sides of this are now
+    # measured values (M2 measures the silence it created), so the tolerance is
+    # tight and symmetric. Brief 004 allowed an asymmetric excess here and blamed
+    # it on per-scene MP3 padding; that was wrong — the excess came from the
+    # concat step, and allowing it hid a real ~0.3s drift.
     expected_total = sum(float(s["duration_seconds"]) for s in scenes) + buffer_seconds * (len(scenes) - 1)
     delta = total_duration - expected_total
-    padding_allowance = PADDING_PER_SCENE * len(scenes)
     report.check(
-        delta >= -TIMELINE_TOLERANCE and delta <= padding_allowance,
+        abs(delta) <= TIMELINE_TOLERANCE,
         f"total_duration {total_duration:.3f}s vs scene sum {expected_total:.3f}s "
-        f"(delta {delta:+.3f}s, allowed -{TIMELINE_TOLERANCE}..+{padding_allowance:.2f}s)",
+        f"(delta {delta:+.3f}s, tolerance +/-{TIMELINE_TOLERANCE}s)",
         f"total_duration {total_duration:.3f}s vs scene sum {expected_total:.3f}s "
-        f"(delta {delta:+.3f}s, allowed -{TIMELINE_TOLERANCE}..+{padding_allowance:.2f}s)"
+        f"(delta {delta:+.3f}s, exceeds +/-{TIMELINE_TOLERANCE}s)"
     )
 
     # Ground truth: the joined audio file itself must match total_duration_seconds.
@@ -321,6 +320,36 @@ def check_voice(report, ep_dir, ep_str):
         f"last word ends at {last_end:.3f}s (<= {total_duration + LAST_WORD_SLACK:.3f}s)",
         f"last word ends at {last_end:.3f}s (> {total_duration + LAST_WORD_SLACK:.3f}s)"
     )
+
+    # Every word must fall inside its own scene's window on the joined timeline.
+    # This is what catches a timing drift that the totals alone would hide: the
+    # joined file can be the right length while scene 6's words sit 0.3s early.
+    words_by_scene = {}
+    for w in words:
+        words_by_scene.setdefault(w.get("scene"), []).append(w)
+
+    scene_start = 0.0
+    for sc in scenes:
+        sc_num = sc["scene"]
+        sc_dur = float(sc["duration_seconds"])
+        sc_words = words_by_scene.get(sc_num, [])
+        window_start = scene_start - SCENE_WINDOW_SLACK
+        window_end = scene_start + sc_dur + SCENE_WINDOW_SLACK
+
+        if not sc_words:
+            report.warned(f"scene {sc_num}: no words timestamped")
+        else:
+            first = float(min(w["start"] for w in sc_words))
+            last = float(max(w["end"] for w in sc_words))
+            report.check(
+                first >= window_start and last <= window_end,
+                f"scene {sc_num}: words span {first:.3f}-{last:.3f}s, "
+                f"inside window {scene_start:.3f}-{scene_start + sc_dur:.3f}s",
+                f"scene {sc_num}: words span {first:.3f}-{last:.3f}s, outside window "
+                f"{window_start:.3f}-{window_end:.3f}s (scene starts at {scene_start:.3f}s)"
+            )
+
+        scene_start += sc_dur + buffer_seconds
 
     spoken_total = read_spoken_word_total(spoken_path)
     if spoken_total is None:
