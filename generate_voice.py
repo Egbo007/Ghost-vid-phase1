@@ -43,7 +43,15 @@ logger = logging.getLogger("generate_voice")
 
 PRIMARY_VOICE = "en-NG-EzinneNeural"
 FLASHBACK_VOICE = "en-NG-AbeoNeural"
+# The silence length we ASK ffmpeg for. The file on disk is measured after
+# creation and that measured value is what the timeline and the JSON use.
 DEFAULT_BUFFER_SECONDS = 0.2
+
+# How far the joined audio may differ from sum(scene durations) + buffers.
+# Beyond the warn threshold the timings drift; beyond the fail threshold they
+# are wrong enough that writing them would be worse than failing.
+JOIN_DELTA_WARN_SECONDS = 0.05
+JOIN_DELTA_FAIL_SECONDS = 0.20
 
 # Word-count reconciliation thresholds between the text we sent to TTS and the
 # WordBoundary events we got back. A small gap is normal (edge-tts splits some
@@ -342,7 +350,18 @@ def create_silence_mp3(duration, out_path):
 
 
 def concatenate_audio_files(file_list, output_path):
-    """Concatenates audio files using FFmpeg concat demuxer."""
+    """
+    Concatenates audio files using the FFmpeg concat demuxer.
+
+    Re-encodes rather than stream-copying. With `-c copy` the per-file MP3
+    gapless/LAME header is not carried through the demuxer, so every join pads
+    out to a whole 1152-sample frame (~0.124 s at 24 kHz). Six scenes gained
+    0.62 s that way, which pushed every later scene's word timestamps and cut
+    point early. Re-encoding writes a correct header for the joined stream and
+    the result matches sum(durations) + buffers exactly. 48 kbps matches the
+    source bitrate from Edge-TTS, so this is one lossy generation, not a
+    quality step down.
+    """
     list_file = output_path.parent / "concat_list.txt"
     with open(list_file, "w", encoding="utf-8") as f:
         for fpath in file_list:
@@ -354,12 +373,45 @@ def concatenate_audio_files(file_list, output_path):
         "-f", "concat",
         "-safe", "0",
         "-i", str(list_file),
-        "-c", "copy",
+        "-c:a", "libmp3lame",
+        "-b:a", "48k",
         str(output_path)
     ]
     subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
     if list_file.exists():
         list_file.unlink()
+
+
+def check_join_delta(total_full_duration, scenes_duration_data, buffer_seconds):
+    """
+    The joined audio must equal sum(scene durations) + the buffers between them.
+    If it does not, every word timestamp and every scene cut after the first
+    scene is wrong, so this fails rather than writing bad timings.
+
+    Returns the delta (joined minus predicted) for logging and tests.
+    """
+    expected = (
+        sum(d["duration_seconds"] for d in scenes_duration_data)
+        + buffer_seconds * max(0, len(scenes_duration_data) - 1)
+    )
+    delta = total_full_duration - expected
+    if abs(delta) > JOIN_DELTA_FAIL_SECONDS:
+        raise RuntimeError(
+            f"Joined audio is {total_full_duration:.3f} s but the scene durations "
+            f"plus buffers predict {expected:.3f} s (delta {delta:+.3f} s). "
+            f"Word timestamps and scene cuts would be wrong; refusing to write them."
+        )
+    if abs(delta) > JOIN_DELTA_WARN_SECONDS:
+        logger.warning(
+            f"Joined audio is {total_full_duration:.3f} s vs predicted "
+            f"{expected:.3f} s (delta {delta:+.3f} s). Timings may drift slightly."
+        )
+    else:
+        logger.info(
+            f"Joined audio {total_full_duration:.3f} s matches predicted "
+            f"{expected:.3f} s (delta {delta:+.3f} s)"
+        )
+    return delta
 
 
 def write_spoken_text(out_path, scenes, episode):
@@ -422,6 +474,14 @@ async def main():
     try:
         create_silence_mp3(DEFAULT_BUFFER_SECONDS, silence_buf_path)
 
+        # The requested length is not necessarily the length on disk, so measure
+        # what we actually got and build the timeline from that.
+        measured_buffer_seconds = get_audio_duration(silence_buf_path)
+        logger.info(
+            f"Silence buffer requested {DEFAULT_BUFFER_SECONDS:.3f} s, "
+            f"measured {measured_buffer_seconds:.3f} s"
+        )
+
         scene_audio_files = []
         scenes_duration_data = []
         all_words = []
@@ -438,7 +498,7 @@ async def main():
             actual_dur = get_audio_duration(sc_audio_file)
             scenes_duration_data.append({
                 "scene": sc_num,
-                "duration_seconds": round(actual_dur, 2),
+                "duration_seconds": round(actual_dur, 3),
                 "audio_file": sc_audio_file.name,
                 "mood": sc["mood"],
                 "voice": voice
@@ -456,7 +516,7 @@ async def main():
                 })
 
             scene_audio_files.append(sc_audio_file)
-            running_timeline_seconds += actual_dur + DEFAULT_BUFFER_SECONDS
+            running_timeline_seconds += actual_dur + measured_buffer_seconds
 
         concat_sequence = []
         for idx, f in enumerate(scene_audio_files):
@@ -464,13 +524,20 @@ async def main():
             if idx < len(scene_audio_files) - 1:
                 concat_sequence.append(silence_buf_path)
 
-        logger.info(f"Concatenating {len(scene_audio_files)} scene audio files with {DEFAULT_BUFFER_SECONDS}s buffer...")
+        logger.info(
+            f"Concatenating {len(scene_audio_files)} scene audio files with "
+            f"{measured_buffer_seconds:.3f}s buffer..."
+        )
         concatenate_audio_files(concat_sequence, final_voice_path)
 
         if silence_buf_path.exists():
             silence_buf_path.unlink()
 
         total_full_duration = get_audio_duration(final_voice_path)
+
+        # The joined file must be the sum of its parts. If it is not, every word
+        # timestamp and every scene cut after the first scene is wrong.
+        check_join_delta(total_full_duration, scenes_duration_data, measured_buffer_seconds)
 
         total_spoken_words = sum(len(sc["text"].split()) for sc in scenes)
         check_word_count(total_spoken_words, len(all_words))
@@ -481,8 +548,8 @@ async def main():
         durations_payload = {
             "episode": args.episode,
             "scenes": scenes_duration_data,
-            "buffer_seconds_between_scenes": DEFAULT_BUFFER_SECONDS,
-            "total_duration_seconds": round(total_full_duration, 2)
+            "buffer_seconds_between_scenes": round(measured_buffer_seconds, 3),
+            "total_duration_seconds": round(total_full_duration, 3)
         }
         with open(durations_json_path, "w", encoding="utf-8") as f:
             json.dump(durations_payload, f, indent=2, ensure_ascii=False)

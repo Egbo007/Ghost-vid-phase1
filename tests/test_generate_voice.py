@@ -315,5 +315,62 @@ class TestWriteSpokenText(unittest.TestCase):
         self.assertNotIn("Visual", content)
 
 
+class TestJoinDeltaGuard(unittest.TestCase):
+    """check_join_delta: warn past 0.05s, refuse past 0.20s."""
+
+    SCENES = [
+        {"scene": 1, "duration_seconds": 8.330},
+        {"scene": 2, "duration_seconds": 11.660},
+    ]
+
+    def test_exact_match_is_silent(self):
+        with self.assertNoLogs("generate_voice", level="WARNING"):
+            delta = gv.check_join_delta(20.254, self.SCENES, 0.264)
+        self.assertAlmostEqual(delta, 0.0, places=6)
+
+    def test_warning_at_0_06(self):
+        with self.assertLogs("generate_voice", level="WARNING") as logs:
+            gv.check_join_delta(20.314, self.SCENES, 0.264)
+        self.assertIn("Timings may drift", "\n".join(logs.output))
+
+    def test_error_at_0_25(self):
+        with self.assertRaises(RuntimeError) as ctx:
+            gv.check_join_delta(20.504, self.SCENES, 0.264)
+        self.assertIn("refusing to write", str(ctx.exception))
+
+    def test_old_0_29s_drift_raises(self):
+        """The real B-18 drift must now be a hard failure, not a warning."""
+        with self.assertRaises(RuntimeError):
+            gv.check_join_delta(20.544, self.SCENES, 0.264)
+
+    def test_shortfall_also_raises(self):
+        with self.assertRaises(RuntimeError):
+            gv.check_join_delta(19.900, self.SCENES, 0.264)
+
+
+class TestConcatenateAudio(unittest.TestCase):
+    """concatenate_audio_files: must re-encode, not stream-copy."""
+
+    def test_reencodes_instead_of_copying(self):
+        """
+        `-c copy` drops the per-file MP3 gapless header and pads every join to a
+        whole frame, which is what caused the B-18 drift.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "joined.mp3"
+            captured = {}
+
+            def fake_run(cmd, **kwargs):
+                captured["cmd"] = cmd
+                return mock.Mock(returncode=0)
+
+            with mock.patch("subprocess.run", side_effect=fake_run):
+                gv.concatenate_audio_files([Path(tmp) / "a.mp3"], out)
+
+        cmd = captured["cmd"]
+        self.assertNotIn("copy", cmd)
+        self.assertIn("libmp3lame", cmd)
+
+
 if __name__ == "__main__":
     unittest.main()
