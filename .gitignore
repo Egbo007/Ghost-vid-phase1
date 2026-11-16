@@ -92,3 +92,6 @@ temp/
 # Blueprint working media folders
 /ashes-of-the-chosen/
 /upload-ready/
+
+# Phase B image probes (generated images must never be committed)
+/ashes-of-the-chosen/phase-b-tests/

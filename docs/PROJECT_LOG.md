@@ -24,6 +24,7 @@ Baseline is tagged `baseline-v0`. S0 work is on `stage0-hygiene`; S1a work is on
 | 003 | S1b: harden M1 (validate, retry, fail cleanly) | S1 | Coded and tested; awaiting user verification | B-03, B-13, B-14 fixed. Draft-then-validate via M2's parser; adds `--print-prompt`. |
 | 004 | Finish Phase A: repair M4, M5, M6 | S1 | Coded and tested; awaiting user verification | B-06, B-07, B-08, B-15, B-16, B-17 fixed. Adds `make_placeholders.py`, `check_episode.py`. |
 | 005 | S1c: fix silence-buffer timing drift | S1 | Coded and tested; awaiting user verification | B-18 fixed. Root cause was the concat step, not the silence length; see B-18. |
+| 006 | Phase B: first real Cloudflare image (flux-2-klein-4b) | B | Coded and tested; awaiting the user's real run | Adds `try_cloudflare_image.py` (probe only, not wired into the pipeline). Prompt = Ada's card text verbatim + scene + `series.overall_aesthetic`. Pins `requests==2.34.2`. |
 
 ---
 
