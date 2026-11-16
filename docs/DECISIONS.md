@@ -206,3 +206,19 @@ before the design exists.
 
 **Rules out:** Committing reference images before Phase C, and scattering them outside the
 `assets\characters\` tree.
+
+---
+
+## DEC-013 — M1 validates by reusing M2's parser
+
+**Status:** Active
+
+M1 validates a generated script by importing `parse_script` and `validate_scenes` from
+`generate_voice.py` and counting spoken words as M2 counts them. M2's parser is the single
+source of truth for what gets spoken.
+
+**Why:** Two independent parsers drift. M1 would approve a script that M2 then speaks
+differently, which is exactly how the wrapped-`(Visual:` bug survived in both modules.
+
+**Rules out:** A second, parallel notion of "valid script" in M1. A shared module is a
+possible later refactor if the import coupling becomes awkward.
