@@ -7,6 +7,8 @@ FAIL / WARN lines with the measured numbers and exits 1 if anything FAILs.
 
 Stages:
   voice   — the two M2 JSONs agree with each other and with the spoken text
+  images  — every expected image exists at 9:16, manifest and review file present,
+            and every image is approved
   raw     — the M4 video is the right format, length and loudness
   final   — the M5 video matches the raw one and its subtitles are sane
   package — the M6 upload copies exist and match the final video
@@ -231,6 +233,65 @@ def ass_time_to_seconds(text):
 
 
 # ---------------------------------------------------------------- stage checks
+
+def check_images(report, ep_dir, ep_str):
+    """Every expected image present at 9:16, manifest and review present, all approved."""
+    prompts_path = ep_dir / f"episode_{ep_str}_image_prompts.json"
+    manifest_path = ep_dir / f"episode_{ep_str}_image_manifest.json"
+    review_path = ep_dir / f"episode_{ep_str}_image_review.json"
+
+    report.check(prompts_path.exists(), f"{prompts_path.name} present",
+                 f"Missing {prompts_path.name}. Run generate_prompts.py first.")
+    report.check(manifest_path.exists(), f"{manifest_path.name} present",
+                 f"Missing {manifest_path.name}. Run generate_images.py first.")
+    report.check(review_path.exists(), f"{review_path.name} present",
+                 f"Missing {review_path.name}. Run review_images.py first.")
+
+    expected = []
+    if prompts_path.exists():
+        try:
+            with open(prompts_path, "r", encoding="utf-8-sig") as f:
+                data = json.load(f)
+            expected = [(e["image_label"], e["file_name"], e.get("width", 720),
+                         e.get("height", 1280)) for e in data]
+        except Exception as e:
+            report.failed(f"Could not read {prompts_path.name}: {type(e).__name__}")
+    if not expected:
+        report.failed(f"No images listed in {prompts_path.name}.")
+        return
+
+    for label, file_name, width, height in expected:
+        path = ep_dir / file_name
+        if not report.check(path.exists(), f"{file_name} present ({label})",
+                            f"Missing image {file_name} ({label})."):
+            continue
+        stream = probe_video_stream(path)
+        if stream is None:
+            report.failed(f"Could not probe {file_name}.")
+            continue
+        try:
+            w, h = int(stream.get("width", 0)), int(stream.get("height", 0))
+        except (TypeError, ValueError):
+            w, h = 0, 0
+        report.check(
+            w == width and h == height,
+            f"{file_name} is {w}x{h}",
+            f"{file_name} is {w}x{h}, expected {width}x{height}."
+        )
+
+    if review_path.exists():
+        try:
+            with open(review_path, "r", encoding="utf-8-sig") as f:
+                review = json.load(f)
+            unapproved = [e.get("label", "?") for e in review if not e.get("approved")]
+            report.check(
+                not unapproved,
+                "all images approved",
+                f"Images not approved: {', '.join(unapproved)}. Run review_images.py --approve."
+            )
+        except Exception as e:
+            report.failed(f"Could not read {review_path.name}: {type(e).__name__}")
+
 
 def check_voice(report, ep_dir, ep_str):
     durations_path = ep_dir / f"episode_{ep_str}_scene_durations.json"
@@ -613,7 +674,7 @@ def parse_arguments():
     parser.add_argument("--upload-dir", type=str, default=DEFAULT_UPLOAD_DIR,
                         help="Upload directory root (used by --stage package)")
     parser.add_argument("--stage", type=str, required=True,
-                        choices=["voice", "raw", "final", "package"],
+                        choices=["voice", "images", "raw", "final", "package"],
                         help="Pipeline stage to verify")
     return parser.parse_args()
 
@@ -634,6 +695,8 @@ def main():
     report = Report()
     if args.stage == "voice":
         check_voice(report, ep_dir, ep_str)
+    elif args.stage == "images":
+        check_images(report, ep_dir, ep_str)
     elif args.stage == "raw":
         check_raw(report, ep_dir, ep_str)
     elif args.stage == "final":

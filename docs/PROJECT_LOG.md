@@ -27,6 +27,7 @@ Baseline is tagged `baseline-v0`. S0 work is on `stage0-hygiene`; S1a work is on
 | 006 | Phase B: first real Cloudflare image (flux-2-klein-4b) | B | Coded and tested; awaiting the user's real run | Adds `try_cloudflare_image.py` (probe only, not wired into the pipeline). Prompt = Ada's card text verbatim + scene + `series.overall_aesthetic`. Pins `requests==2.34.2`. |
 | 007 | Phase B: reference images + prompt file | B | Coded and tested; awaiting the user's real run | `--reference` (repeatable, max 4) centre-crops to square and scales to 448x448 PNG via ffmpeg, sent as `input_image_0..3`. `--prompt-file` replaces the card/scene/style builder. `usage_log.jsonl` records `reference_count`. |
 | 008 | Phase B: script-driven prompts + batch generation | B | Coded and tested; awaiting the user's real run | Rewrites `generate_prompts.py` to use M2's parser; adds `image_providers.py` (Cloudflare/Gemini stub) and `generate_images.py` (resume, manifest, quota stop, retries, ffprobe check). Drops the two `Not ` sentences from the style line. |
+| 009 | Phase B: automatic image checks + approval | B | Coded and tested; awaiting the user's real run | Adds `review_images.py` (ffprobe/ffmpeg checks, sha256 duplicates, 4-column contact sheet, approve/regenerate) and the `images` stage in `check_episode.py`. Blank check needs extreme luma AND tiny range. |
 
 ---
 

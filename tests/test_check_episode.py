@@ -691,6 +691,67 @@ class TestPackageStage(unittest.TestCase):
         self.assertEqual(report.failures, 1)
 
 
+class TestImagesStage(unittest.TestCase):
+    """The images stage: files, manifest, review, approval."""
+
+    def make_episode(self, tmp, approved=True, with_image=True):
+        root = Path(tmp)
+        ep = root / "episode-99"
+        ep.mkdir(parents=True)
+        prompts = [{"image_label": "1a", "file_name": "scene_01a.png",
+                    "width": 720, "height": 1280}]
+        (ep / "episode_99_image_prompts.json").write_text(
+            json.dumps(prompts), encoding="utf-8")
+        (ep / "episode_99_image_manifest.json").write_text(
+            json.dumps([{"label": "1a", "file": "scene_01a.png"}]),
+            encoding="utf-8")
+        (ep / "episode_99_image_review.json").write_text(
+            json.dumps([{"label": "1a", "approved": approved}]), encoding="utf-8")
+        if with_image:
+            (ep / "scene_01a.png").write_bytes(b"x")
+        return ep
+
+    def test_pass_when_all_present_and_approved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ep = self.make_episode(tmp)
+            report = ce.Report()
+            with mock.patch.object(ce, "probe_video_stream",
+                                   return_value={"width": 720, "height": 1280}), \
+                 redirect_stdout(io.StringIO()):
+                ce.check_images(report, ep, "99")
+        self.assertEqual(report.failures, 0)
+
+    def test_fail_when_not_approved(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ep = self.make_episode(tmp, approved=False)
+            report = ce.Report()
+            with mock.patch.object(ce, "probe_video_stream",
+                                   return_value={"width": 720, "height": 1280}), \
+                 redirect_stdout(io.StringIO()) as out:
+                ce.check_images(report, ep, "99")
+        self.assertEqual(report.failures, 1)
+        self.assertIn("1a", out.getvalue())
+        self.assertIn("not approved", out.getvalue())
+
+    def test_fail_when_image_missing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ep = self.make_episode(tmp, with_image=False)
+            report = ce.Report()
+            with redirect_stdout(io.StringIO()):
+                ce.check_images(report, ep, "99")
+        self.assertEqual(report.failures, 1)
+
+    def test_fail_when_wrong_size(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ep = self.make_episode(tmp)
+            report = ce.Report()
+            with mock.patch.object(ce, "probe_video_stream",
+                                   return_value={"width": 100, "height": 100}), \
+                 redirect_stdout(io.StringIO()):
+                ce.check_images(report, ep, "99")
+        self.assertEqual(report.failures, 1)
+
+
 class TestReport(unittest.TestCase):
     """Report: exit code follows failures only."""
 
