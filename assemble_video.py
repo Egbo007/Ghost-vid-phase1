@@ -501,6 +501,8 @@ def main():
             "-c:v", "libx264",
             "-preset", "fast",
             "-crf", "18",
+            "-pix_fmt", "yuv420p",
+            "-color_range", "tv",
             "-c:a", "aac",
             "-b:a", "192k",
             "-ar", str(SAMPLE_RATE),

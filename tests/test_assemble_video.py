@@ -378,6 +378,19 @@ class TestRenderClipFilter(unittest.TestCase):
             self.assertIn(f"d={frames}:", filt, f"expected d={frames} for {frames} frames")
 
 
+class TestFinalMuxPixelFormat(unittest.TestCase):
+    """The final mux must force limited-range yuv420p, or JPEG sources stay yuvj420p."""
+
+    def test_final_mux_sets_limited_range_yuv420p(self):
+        source = Path(av.__file__).read_text(encoding="utf-8")
+        # Inspect the final mux command block (the one that writes the raw mp4).
+        marker = "cmd_mix = ["
+        self.assertIn(marker, source)
+        block = source[source.index(marker):]
+        self.assertIn('"-pix_fmt", "yuv420p"', block)
+        self.assertIn('"-color_range", "tv"', block)
+
+
 class TestProbeDuration(unittest.TestCase):
     def test_missing_file_returns_none(self):
         self.assertIsNone(av.probe_duration("definitely_not_here.mp4"))
