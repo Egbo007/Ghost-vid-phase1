@@ -6,6 +6,7 @@ out_path) -> saved path. No provider prints or logs credentials.
 """
 
 import logging
+import subprocess
 import sys
 from pathlib import Path
 
@@ -93,6 +94,41 @@ class CloudflareProvider(BaseProvider):
         return out_path
 
 
+class FakeProvider(BaseProvider):
+    """Offline test provider: a solid-colour JPG via ffmpeg. No network, no credentials.
+
+    Each call advances a counter so consecutive images get different colours.
+    The counter is also derived from an existing file's name, so a resumed run
+    keeps varying colours.
+    """
+    name = "fake"
+    COLOURS = ("0x203050", "0x503020", "0x305030", "0x503050",
+               "0x305050", "0x504020", "0x403050")
+
+    def __init__(self):
+        self._index = 0
+
+    def generate(self, prompt, width, height, reference_paths, out_path):
+        out_path = Path(out_path)
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        colour = self.COLOURS[self._index % len(self.COLOURS)]
+        self._index += 1
+        cmd = ["ffmpeg", "-y", "-f", "lavfi", "-i",
+               f"color=c={colour}:s={width}x{height}:d=1",
+               "-frames:v", "1", "-c:v", "mjpeg", "-q:v", "3",
+               "-f", "image2", str(out_path)]
+        try:
+            res = subprocess.run(cmd, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True)
+        except Exception as e:
+            raise ProviderError(f"ffmpeg could not start: {type(e).__name__}")
+        if res.returncode != 0 or not out_path.exists():
+            raise ProviderError("ffmpeg failed to make a test image: "
+                                + "\n".join((res.stderr or "").strip().splitlines()[-4:]))
+        logger.info(f"FakeProvider: wrote {out_path.name} ({width}x{height}, {colour})")
+        return out_path
+
+
 class GeminiProvider(BaseProvider):
     name = "gemini"
 
@@ -105,6 +141,7 @@ class GeminiProvider(BaseProvider):
 PROVIDERS = {
     CloudflareProvider.name: CloudflareProvider,
     GeminiProvider.name: GeminiProvider,
+    FakeProvider.name: FakeProvider,
 }
 
 
